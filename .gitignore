@@ -1,0 +1,23 @@
+# Virtual Environment
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment
+.env
+
+# Logs
+logs/
+
+# Database
+database/*.duckdb
+database/*.wal
+
+# Data
+data/
+
+# VS Code
+.vscode/
