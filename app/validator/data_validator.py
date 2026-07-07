@@ -4,6 +4,8 @@ Data Validator
 
 import pandas as pd
 
+from app.models.validation_report import ValidationReport
+
 
 class DataValidator:
 
@@ -22,66 +24,60 @@ class DataValidator:
     ]
 
     @classmethod
-    def validate(cls, df: pd.DataFrame):
+    def validate(cls, df: pd.DataFrame) -> ValidationReport:
 
-        cls.check_empty(df)
-        cls.check_columns(df)
-        cls.check_nulls(df)
-        cls.check_duplicates(df)
-        cls.check_ohlc(df)
+        report = ValidationReport()
 
-        return True
+        try:
+            cls.check_empty(df)
+            cls.check_columns(df)
+            cls.check_nulls(df)
+            cls.check_duplicates(df)
+            cls.check_ohlc(df)
+        except ValueError as e:
+            report.add_error(str(e))
+
+        return report
 
     @staticmethod
-    def check_empty(df):
+    def check_empty(df: pd.DataFrame):
 
         if df.empty:
             raise ValueError("Downloaded dataframe is empty.")
 
     @classmethod
-    def check_columns(cls, df):
+    def check_columns(cls, df: pd.DataFrame):
 
         missing = [
-            c for c in cls.REQUIRED_COLUMNS
-            if c not in df.columns
+            column
+            for column in cls.REQUIRED_COLUMNS
+            if column not in df.columns
         ]
 
         if missing:
-            raise ValueError(
-                f"Missing columns: {missing}"
-            )
+            raise ValueError(f"Missing columns: {missing}")
 
     @staticmethod
-    def check_nulls(df):
+    def check_nulls(df: pd.DataFrame):
 
         if df.isnull().any().any():
-            raise ValueError(
-                "Null values detected."
-            )
+            raise ValueError("Null values detected.")
 
     @staticmethod
-    def check_duplicates(df):
+    def check_duplicates(df: pd.DataFrame):
 
-        duplicated = df.duplicated(
-            subset=["trade_datetime"]
-        )
-
-        if duplicated.any():
-            raise ValueError(
-                "Duplicate timestamps detected."
-            )
+        if df.duplicated(subset=["trade_datetime"]).any():
+            raise ValueError("Duplicate timestamps detected.")
 
     @staticmethod
-    def check_ohlc(df):
+    def check_ohlc(df: pd.DataFrame):
 
         invalid = (
-            (df["high"] < df["open"]) |
-            (df["high"] < df["close"]) |
-            (df["low"] > df["open"]) |
-            (df["low"] > df["close"])
+            (df["high"] < df["open"])
+            | (df["high"] < df["close"])
+            | (df["low"] > df["open"])
+            | (df["low"] > df["close"])
         )
 
         if invalid.any():
-            raise ValueError(
-                "Invalid OHLC values detected."
-            )
+            raise ValueError("Invalid OHLC values detected.")
