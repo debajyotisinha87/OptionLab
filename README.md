@@ -1,14 +1,13 @@
-# OptionLab
+# Dhan Option Downloader
 
-A professional quantitative options research platform.
+This project downloads and stores 5 years of 1-minute historical options data from DhanHQ.
 
-OptionLab provides:
+Features:
 
-- Historical Options Downloader
-- DuckDB Data Store
-- Data Validation
-- Resume Engine
-- Strategy SDK
-- Backtesting Engine
-- CSV & Parquet Export
-- Multi-Broker Support (planned)
+- ATM
+- 10 ITM
+- 10 OTM
+- Call & Put
+- DuckDB Storage
+- Daily Auto Update
+- Backtesting Ready

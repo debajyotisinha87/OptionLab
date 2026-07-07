@@ -5,6 +5,7 @@ Download one day's historical option data.
 from app.api.rolling_option import RollingOptionAPI
 from app.storage.data_normalizer import DataNormalizer
 from app.storage.csv_writer import CSVWriter
+from app.database.duckdb_manager import DuckDBManager
 
 
 def test_download():
@@ -45,7 +46,18 @@ def test_download():
         print("No CE data returned.")
         return
 
-    df = DataNormalizer.normalize(ce)
+    df = DataNormalizer.normalize(
+        option_data=ce,
+        symbol="NIFTY",
+        option_type="CALL",
+        strike_type="ATM",
+        expiry_flag="MONTH",
+        expiry_code=1,
+    )
+
+    db = DuckDBManager()
+    db.create_tables()
+    db.insert_dataframe(df)
 
     print(df.head())
 
