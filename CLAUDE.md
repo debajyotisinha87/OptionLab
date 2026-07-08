@@ -21,21 +21,23 @@ pip install -r requirements.txt
 
 **Run the app:**
 ```bash
-python -m app.main
+python -m app.main test-connection
+python -m app.main download --underlying NIFTY --expiry-type MONTH --option-types CALL,PUT --strike-from -10 --strike-to 10 --start-date 2025-01-01 --end-date 2025-03-31 [--job-id JOB-000001]
+python -m app.main resume --job-id JOB-000001
 ```
-This currently just prints a banner and calls `DhanAPI.test_connection()` — it makes a real network call to `https://api.dhan.co/v2/fundlimit` using credentials from `.env`.
+`app/main.py` is an argparse-based CLI with three subcommands. `test-connection` makes a real network call to `https://api.dhan.co/v2/fundlimit` using credentials from `.env`. `download` builds a `DownloadJob` and calls `DownloadEngine.run()`; if `--job-id` is omitted it defaults to `<underlying>-<start_date>-<end_date>`. `resume` calls `DownloadEngine.resume()` for an existing `job_id`. Both `download` and `resume` make real API calls and write to the real database — there's no dry-run mode.
 
-**Tests — there is no pytest.** `pytest` is not in `requirements.txt` and is not installed. Most files under `app/tests/` are standalone scripts, not pytest suites: they run assertions (or just print output) at module level and are executed directly, e.g.:
+**Tests — there is no pytest.** `pytest` is not in `requirements.txt` and is not installed. Files under `app/tests/` are standalone scripts, not pytest suites, executed directly, e.g.:
 ```bash
 python -m app.tests.test_download_planner
 python -m app.tests.test_manifest_integration
 ```
-Only `test_manifest_integration.py` uses real `assert`-based `test_*()` functions with an `if __name__ == "__main__"` runner — treat it as the template for new tests. Others (`test_job.py`, `test_download_planner.py`) just construct objects and print them; they "pass" if they don't raise.
+Most newer files (`test_manifest_integration.py`, `test_resume_engine.py`, `test_retry_engine.py`, `test_progress_reporter.py`, `test_logging_config.py`, `test_cli.py`) use real `assert`-based `test_*()` functions with an `if __name__ == "__main__"` runner — treat these as the template for new tests, and use their monkeypatch-a-module-level-name pattern (e.g. `main_module.DownloadEngine = FakeDownloadEngine`) to fake out real DB/API/tqdm dependencies rather than adding mocking libraries. Older ones (`test_job.py`, `test_download_planner.py`) just construct objects and print them; they "pass" if they don't raise.
 
 Be careful before running tests/scripts that touch live resources:
-- `test_repository.py`, `test_database.py` connect to the real `database/optionlab.duckdb`.
-- `test_download_engine.py` and `app/downloader/download_day.py` perform **real API calls to DhanHQ** and write to the real database.
-- Prefer the pure/offline ones (`test_job.py`, `test_download_planner.py`, `test_validator.py`, `test_manifest_integration.py`) when just sanity-checking logic.
+- `test_repository.py`, `test_download_jobs.py`, `test_download_manifest.py` connect to the real `database/optionlab.duckdb`.
+- `test_download_engine.py` performs **real API calls to DhanHQ** and writes to the real database (as does `python -m app.main download`/`resume`).
+- Prefer the pure/offline ones (`test_job.py`, `test_download_planner.py`, `test_validator.py`, `test_manifest_integration.py`, `test_resume_engine.py`, `test_retry_engine.py`, `test_progress_reporter.py`, `test_logging_config.py`, `test_cli.py`) when just sanity-checking logic.
 
 ## Architecture
 
@@ -59,7 +61,7 @@ Layer responsibilities (from `PROJECT_CONTEXT.md` / `PROJECT_RULES.md` — treat
 - **`app/database`** (`Repository`, `DuckDBManager`): **all SQL lives here and only here.** Table DDL lives in `app/database/schema/*.sql` and is applied via `Repository.execute_sql_file()`. No other module should construct SQL.
 - **`app/models`**: plain `@dataclass` models (`DownloadJob`, `DownloadBatch`, `ValidationReport`, etc.) with no business logic. `JobStatus` is a `str, Enum` in `app/models/enums/`.
 
-`app/downloader/manager.py` (`DownloadManager`) and `app/downloader/download_day.py` are earlier, superseded prototypes of the batching/download logic from before the `DownloadPlanner`/`DownloadEngine`/`DownloadService` split — they are not wired into the current pipeline (`DownloadEngine` doesn't use them). Don't extend them; treat `DownloadPlanner`/`DownloadEngine`/`DownloadService` as canonical.
+`app/downloader/manager.py` (`DownloadManager`) and `app/downloader/download_day.py` were earlier, superseded prototypes of the batching/download logic from before the `DownloadPlanner`/`DownloadEngine`/`DownloadService` split; they were never wired into the current pipeline and have since been deleted outright (along with their smoke tests) rather than left as dead code — treat `DownloadPlanner`/`DownloadEngine`/`DownloadService` as canonical and don't try to resurrect them.
 
 ### Database
 

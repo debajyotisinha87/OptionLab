@@ -76,7 +76,18 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python -m app.main
+python -m app.main test-connection
+
+python -m app.main download \
+  --underlying NIFTY \
+  --expiry-type MONTH \
+  --option-types CALL,PUT \
+  --strike-from -10 \
+  --strike-to 10 \
+  --start-date 2025-01-01 \
+  --end-date 2025-03-31
+
+python -m app.main resume --job-id JOB-000001
 ```
 
 ---
