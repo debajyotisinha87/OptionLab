@@ -40,7 +40,7 @@ Sprint 1
 
 Current Task
 
-TASK-023 – CLI
+TASK-024 – End-to-End Testing
 
 ---
 
@@ -470,21 +470,11 @@ Preserve the existing architecture.
 
 ✓ Logging (TASK-022)
 
+✓ CLI (TASK-023)
+
 ---
 
 # Current Task
-
-TASK-023
-
-CLI
-
-Single entry point:
-
-```
-python -m app.main
-```
-
----
 
 TASK-024
 
