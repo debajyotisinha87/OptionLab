@@ -40,7 +40,7 @@ Sprint 1
 
 Current Task
 
-TASK-021.6 – Manifest Integration
+TASK-023 – CLI
 
 ---
 
@@ -468,17 +468,11 @@ Preserve the existing architecture.
 
 ✓ Progress Engine (TASK-021.9)
 
+✓ Logging (TASK-022)
+
 ---
 
 # Current Task
-
-TASK-022
-
-Logging
-
-Replace print() with logging.
-
----
 
 TASK-023
 
