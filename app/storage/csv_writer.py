@@ -5,6 +5,10 @@ CSV Writer
 from pathlib import Path
 import pandas as pd
 
+from app.config.logging_config import get_logger
+
+logger = get_logger()
+
 
 class CSVWriter:
 
@@ -19,4 +23,4 @@ class CSVWriter:
 
         df.to_csv(path, index=False)
 
-        print(f"\nSaved : {path}")
+        logger.info(f"Saved : {path}")

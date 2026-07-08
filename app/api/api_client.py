@@ -9,6 +9,9 @@ from app.config.config import (
     DHAN_ACCESS_TOKEN,
     DHAN_CLIENT_ID,
 )
+from app.config.logging_config import get_logger
+
+logger = get_logger()
 
 
 class DhanAPI:
@@ -33,17 +36,16 @@ class DhanAPI:
             headers=self.headers,
         )
 
-        print("\nStatus Code :", response.status_code)
+        logger.info(f"Status Code : {response.status_code}")
 
         if response.status_code == 200:
-            print("Connected Successfully")
+            logger.info("Connected Successfully")
         else:
-            print("Connection Failed")
+            logger.error("Connection Failed")
 
         try:
-            print("\nResponse:")
-            print(response.json())
+            logger.debug(f"Response: {response.json()}")
         except Exception:
-            print(response.text)
+            logger.debug(f"Response: {response.text}")
 
         return response

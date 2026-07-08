@@ -19,6 +19,10 @@ import time
 
 from tqdm import tqdm
 
+from app.config.logging_config import get_logger
+
+logger = get_logger()
+
 
 class ProgressReporter:
 
@@ -83,7 +87,7 @@ class ProgressReporter:
 
         if self.bar.disable:
 
-            self.write(self._summary_line(elapsed, rows_per_second))
+            logger.info(self._summary_line(elapsed, rows_per_second))
 
     def _summary_line(self, elapsed: float, rows_per_second: float) -> str:
 
@@ -107,16 +111,6 @@ class ProgressReporter:
             f"({percent:.1f}%) | Rows: {self.total_rows} "
             f"| Speed: {rows_per_second:.1f} rows/sec | ETA: {eta}"
         )
-
-    def write(self, message: str):
-
-        if self.bar is None:
-
-            print(message)
-
-            return
-
-        self.bar.write(message, file=sys.stdout)
 
     def close(self):
 

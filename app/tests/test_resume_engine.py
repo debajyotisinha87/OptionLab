@@ -240,10 +240,6 @@ class FakeProgressReporter:
 
         pass
 
-    def write(self, message):
-
-        pass
-
     def close(self):
 
         pass

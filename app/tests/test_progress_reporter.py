@@ -78,7 +78,7 @@ def test_record_advances_the_bar_and_accumulates_rows():
     reporter.close()
 
 
-def test_record_and_write_actually_drive_the_real_bar_when_enabled():
+def test_record_actually_drives_the_real_bar_when_enabled():
 
     def run():
 
@@ -88,7 +88,6 @@ def test_record_and_write_actually_drive_the_real_bar_when_enabled():
         assert not reporter.bar.disable
 
         reporter.record(inserted_rows=100)
-        reporter.write("status line")
 
         bar_n = reporter.bar.n
         bar_postfix = reporter.bar.postfix
@@ -102,7 +101,6 @@ def test_record_and_write_actually_drive_the_real_bar_when_enabled():
     assert bar_n == 1
     assert "rows=100" in bar_postfix
     assert "Test Job" in output
-    assert "status line" in output
 
 
 def test_record_emits_a_plain_text_summary_when_bar_is_disabled():
@@ -130,21 +128,6 @@ def test_record_emits_a_plain_text_summary_when_bar_is_disabled():
     assert "1/2" in output
     assert "250" in output
     assert "ETA" in output
-
-
-def test_write_works_with_an_active_bar_and_with_no_bar():
-
-    reporter = ProgressReporter()
-
-    # no bar yet - must not raise
-    reporter.write("before any job has started")
-
-    reporter.reset(total_units=1, description="Test Job")
-    reporter.write("mid-job status line")
-    reporter.close()
-
-    # bar closed - must not raise
-    reporter.write("after the job finished")
 
 
 def test_record_before_reset_does_not_raise():
@@ -213,9 +196,8 @@ if __name__ == "__main__":
     test_reset_creates_a_bar_with_the_given_total()
     test_reset_seeds_total_rows_from_initial_rows()
     test_record_advances_the_bar_and_accumulates_rows()
-    test_record_and_write_actually_drive_the_real_bar_when_enabled()
+    test_record_actually_drives_the_real_bar_when_enabled()
     test_record_emits_a_plain_text_summary_when_bar_is_disabled()
-    test_write_works_with_an_active_bar_and_with_no_bar()
     test_record_before_reset_does_not_raise()
     test_close_is_idempotent()
     test_reset_closes_the_previous_bar_before_creating_a_new_one()

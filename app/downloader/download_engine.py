@@ -3,12 +3,15 @@ Download Engine
 """
 
 from app.builders.payload_builder import PayloadBuilder
+from app.config.logging_config import get_logger
 from app.downloader.progress_reporter import ProgressReporter
 from app.models.download_batch import DownloadBatch
 from app.models.enums.job_status import JobStatus
 from app.models.job import DownloadJob
 from app.planner.download_planner import DownloadPlanner
 from app.services.download_service import DownloadService
+
+logger = get_logger()
 
 
 class DownloadEngine:
@@ -58,7 +61,7 @@ class DownloadEngine:
 
         if record["status"] == self.COMPLETED_STATUS:
 
-            print(f"Job {job_id} is already completed. Nothing to resume.")
+            logger.info(f"Job {job_id} is already completed. Nothing to resume.")
 
             return
 
@@ -77,11 +80,11 @@ class DownloadEngine:
 
                 self.finish_job(job_id)
 
-            print(f"Job {job_id} has no retryable work left. Nothing to resume.")
+            logger.info(f"Job {job_id} has no retryable work left. Nothing to resume.")
 
             return
 
-        print(f"Resuming Job : {job_id}")
+        logger.info(f"Resuming Job : {job_id}")
 
         self.execute(job)
 
@@ -113,9 +116,9 @@ class DownloadEngine:
 
     def execute(self, job: DownloadJob):
 
-        print("=" * 60)
-        print(f"Starting Job : {job.job_id}")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info(f"Starting Job : {job.job_id}")
+        logger.info("=" * 60)
 
         self.repo.reconcile_stale_running_batches(job.job_id)
 
@@ -127,7 +130,7 @@ class DownloadEngine:
 
         self.repo.set_job_total_batches(job.job_id, total_units)
 
-        print(f"Total Batches : {len(batches)}")
+        logger.info(f"Total Batches : {len(batches)}")
 
         already_inserted_rows = self.repo.get_job_progress(job.job_id)["total_rows"]
 
@@ -148,9 +151,9 @@ class DownloadEngine:
 
         self.finish_job(job.job_id)
 
-        print("=" * 60)
-        print("Job Completed")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("Job Completed")
+        logger.info("=" * 60)
 
     def finish_job(self, job_id: str):
 
@@ -170,12 +173,12 @@ class DownloadEngine:
         batch: DownloadBatch,
     ):
 
-        self.progress.write("-" * 60)
-        self.progress.write(f"Processing Batch : {batch.batch_number}")
-        self.progress.write(
+        logger.info("-" * 60)
+        logger.info(f"Processing Batch : {batch.batch_number}")
+        logger.info(
             f"Date Range       : {batch.from_date} -> {batch.to_date}"
         )
-        self.progress.write("-" * 60)
+        logger.info("-" * 60)
 
         for option_type in job.option_types:
 
@@ -185,7 +188,7 @@ class DownloadEngine:
                 option_type=option_type,
             )
 
-        self.progress.write("Batch completed.\n")
+        logger.info("Batch completed.")
 
     def process_option_type(
         self,
@@ -194,7 +197,7 @@ class DownloadEngine:
         option_type: str,
     ):
 
-        self.progress.write(f"Downloading {option_type}...")
+        logger.info(f"Downloading {option_type}...")
 
         payload = PayloadBuilder.build(
             job=job,
@@ -211,7 +214,7 @@ class DownloadEngine:
             strike_offset=strike_offset,
         ):
 
-            self.progress.write(f"Skipping {option_type}: already completed.")
+            logger.info(f"Skipping {option_type}: already completed.")
 
             self.progress.record()
 
@@ -224,7 +227,7 @@ class DownloadEngine:
             strike_offset=strike_offset,
         ):
 
-            self.progress.write(
+            logger.warning(
                 f"Skipping {option_type}: retry limit "
                 f"({self.MAX_RETRIES}) exceeded."
             )
@@ -277,6 +280,8 @@ class DownloadEngine:
             strike_offset=strike_offset,
             error_message=result["error"],
         )
+
+        logger.error(f"{option_type} download failed: {result['error']}")
 
         self.progress.record()
 
