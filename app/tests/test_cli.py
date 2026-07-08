@@ -5,7 +5,14 @@ import sys
 
 import app.main as main_module
 from app.config.config import LOG_DIR
-from app.main import _parse_date, _parse_non_blank, build_parser, main
+from app.main import (
+    _parse_date,
+    _parse_expiry_type,
+    _parse_non_blank,
+    _parse_option_types,
+    build_parser,
+    main,
+)
 
 
 class FakeDownloadEngine:
@@ -212,6 +219,55 @@ def test_build_parser_rejects_a_blank_job_id():
         return
 
     raise AssertionError("Expected SystemExit for a blank --job-id")
+
+
+def test_parse_expiry_type_accepts_week_and_month_case_insensitively():
+
+    assert _parse_expiry_type("MONTH") == "MONTH"
+    assert _parse_expiry_type("week") == "WEEK"
+    assert _parse_expiry_type("  Month  ") == "MONTH"
+
+
+def test_parse_expiry_type_rejects_an_unsupported_value():
+
+    try:
+        _parse_expiry_type("QUARTER")
+    except argparse.ArgumentTypeError:
+        return
+
+    raise AssertionError("Expected ArgumentTypeError for an unsupported expiry type")
+
+
+def test_parse_option_types_rejects_unsupported_option_types():
+
+    try:
+        _parse_option_types("CE,PE")
+    except argparse.ArgumentTypeError:
+        return
+
+    raise AssertionError("Expected ArgumentTypeError for unsupported option types")
+
+
+def test_build_parser_rejects_an_invalid_expiry_type():
+
+    parser = build_parser()
+
+    try:
+        parser.parse_args([
+            "download",
+            "--underlying", "NIFTY",
+            "--expiry-type", "QUARTER",
+            "--option-types", "CALL",
+            "--strike-from", "0",
+            "--strike-to", "0",
+            "--start-date", "2025-01-01",
+            "--end-date", "2025-01-31",
+        ])
+    except SystemExit as exc:
+        assert exc.code != 0
+        return
+
+    raise AssertionError("Expected SystemExit for an invalid --expiry-type")
 
 
 def test_parse_non_blank_rejects_blank_and_strips_whitespace():
@@ -438,6 +494,10 @@ if __name__ == "__main__":
     test_build_parser_rejects_empty_option_types()
     test_build_parser_rejects_blank_underlying_and_expiry_type()
     test_build_parser_rejects_a_blank_job_id()
+    test_parse_expiry_type_accepts_week_and_month_case_insensitively()
+    test_parse_expiry_type_rejects_an_unsupported_value()
+    test_parse_option_types_rejects_unsupported_option_types()
+    test_build_parser_rejects_an_invalid_expiry_type()
     test_parse_non_blank_rejects_blank_and_strips_whitespace()
     test_parse_date_sanitizes_unencodable_characters_in_its_error_message()
     test_download_defaults_job_id_from_underlying_and_dates()

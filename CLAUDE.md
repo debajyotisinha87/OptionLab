@@ -25,7 +25,7 @@ python -m app.main test-connection
 python -m app.main download --underlying NIFTY --expiry-type MONTH --option-types CALL,PUT --strike-from -10 --strike-to 10 --start-date 2025-01-01 --end-date 2025-03-31 [--job-id JOB-000001]
 python -m app.main resume --job-id JOB-000001
 ```
-`app/main.py` is an argparse-based CLI with three subcommands. `test-connection` makes a real network call to `https://api.dhan.co/v2/fundlimit` using credentials from `.env`. `download` builds a `DownloadJob` and calls `DownloadEngine.run()`; if `--job-id` is omitted it defaults to `<underlying>-<start_date>-<end_date>`. `resume` calls `DownloadEngine.resume()` for an existing `job_id`. Both `download` and `resume` make real API calls and write to the real database — there's no dry-run mode.
+`app/main.py` is an argparse-based CLI with three subcommands. `test-connection` makes a real network call to `https://api.dhan.co/v2/fundlimit` using credentials from `.env`. `download` builds a `DownloadJob` and calls `DownloadEngine.run()`; if `--job-id` is omitted it defaults to `<underlying>-<start_date>-<end_date>`. `resume` calls `DownloadEngine.resume()` for an existing `job_id`. Both `download` and `resume` make real API calls and write to the real database — there's no dry-run mode. `--expiry-type` (case-insensitive) and `--option-types` are validated against DhanHQ's actual `/v2/charts/rollingoption` enum values (`WEEK`/`MONTH` and `CALL`/`PUT` respectively) so a typo fails fast at the CLI instead of at the live API call.
 
 **Tests — there is no pytest.** `pytest` is not in `requirements.txt` and is not installed. Files under `app/tests/` are standalone scripts, not pytest suites, executed directly, e.g.:
 ```bash

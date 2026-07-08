@@ -63,6 +63,26 @@ def _parse_non_blank(value: str) -> str:
     return stripped
 
 
+# Per DhanHQ's /v2/charts/rollingoption docs: expiryFlag accepts only
+# WEEK/MONTH, drvOptionType accepts only CALL/PUT.
+VALID_EXPIRY_TYPES = ("WEEK", "MONTH")
+VALID_OPTION_TYPES = ("CALL", "PUT")
+
+
+def _parse_expiry_type(value: str) -> str:
+
+    normalized = value.strip().upper()
+
+    if normalized not in VALID_EXPIRY_TYPES:
+
+        raise argparse.ArgumentTypeError(
+            f"invalid choice: '{value}' "
+            f"(choose from {', '.join(VALID_EXPIRY_TYPES)})"
+        )
+
+    return normalized
+
+
 def _parse_option_types(value: str) -> list[str]:
 
     option_types = [
@@ -75,6 +95,19 @@ def _parse_option_types(value: str) -> list[str]:
 
         raise argparse.ArgumentTypeError(
             "--option-types must contain at least one value, e.g. CALL,PUT"
+        )
+
+    invalid = [
+        option_type
+        for option_type in option_types
+        if option_type not in VALID_OPTION_TYPES
+    ]
+
+    if invalid:
+
+        raise argparse.ArgumentTypeError(
+            f"invalid option type(s): {', '.join(invalid)} "
+            f"(choose from {', '.join(VALID_OPTION_TYPES)})"
         )
 
     return option_types
@@ -102,7 +135,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--underlying", required=True, type=_parse_non_blank
     )
     download_parser.add_argument(
-        "--expiry-type", required=True, type=_parse_non_blank
+        "--expiry-type",
+        required=True,
+        type=_parse_expiry_type,
+        help="WEEK or MONTH",
     )
     download_parser.add_argument(
         "--option-types",
