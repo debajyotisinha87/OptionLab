@@ -158,6 +158,90 @@ class Repository:
 
         return result[0]
 
+    def get_manifest_retry_count(
+        self,
+        job_id: str,
+        batch_number: int,
+        option_type: str,
+        strike_offset: int,
+    ) -> int:
+
+        result = self.db.connection.execute(
+            """
+            SELECT
+                retry_count
+            FROM
+                download_manifest
+            WHERE
+                job_id = ?
+            AND
+                batch_number = ?
+            AND
+                option_type = ?
+            AND
+                strike_offset = ?
+            LIMIT 1
+            """,
+            [
+                job_id,
+                batch_number,
+                option_type,
+                strike_offset,
+            ],
+        ).fetchone()
+
+        if result is None:
+
+            return 0
+
+        return result[0]
+
+    def reconcile_stale_running_batches(self, job_id: str) -> bool:
+        """
+        A manifest row left at RUNNING means a previous attempt was
+        interrupted before it could record success or failure (this
+        engine is single-process/synchronous, so RUNNING can never mean
+        "still actively in progress" by the time we're re-checking it).
+        Resolve it to FAILED so retry-limit/completion checks see a real
+        terminal state instead of a permanently stuck RUNNING row.
+
+        Returns whether any row was actually reconciled, so callers can
+        avoid re-closing an already-terminal job for no reason.
+        """
+
+        has_stale_rows = self.db.connection.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM download_manifest
+                WHERE job_id = ?
+                AND status = 'RUNNING'
+            )
+            """,
+            [job_id],
+        ).fetchone()[0]
+
+        if not has_stale_rows:
+
+            return False
+
+        self.db.connection.execute(
+            """
+            UPDATE download_manifest
+            SET
+                status = 'FAILED',
+                error_message = 'Interrupted before completing.',
+                completed_at = CURRENT_TIMESTAMP
+            WHERE
+                job_id = ?
+            AND
+                status = 'RUNNING'
+            """,
+            [job_id],
+        )
+
+        return True
+
     def mark_batch_started(
         self,
         job_id: str,
@@ -173,7 +257,8 @@ class Repository:
                 status = 'RUNNING',
                 started_at = CURRENT_TIMESTAMP,
                 completed_at = NULL,
-                error_message = NULL
+                error_message = NULL,
+                retry_count = retry_count + 1
             WHERE
                 job_id = ?
             AND
@@ -243,7 +328,6 @@ class Repository:
             UPDATE download_manifest
             SET
                 status = 'FAILED',
-                retry_count = retry_count + 1,
                 error_message = ?,
                 completed_at = CURRENT_TIMESTAMP
             WHERE

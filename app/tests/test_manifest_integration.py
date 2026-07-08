@@ -20,6 +20,10 @@ class FakeRepository:
 
         return self.manifest_status
 
+    def get_manifest_retry_count(self, **kwargs):
+
+        return 0
+
     def mark_batch_started(self, **kwargs):
 
         self.events.append(("RUNNING", kwargs))

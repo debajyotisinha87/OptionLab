@@ -16,6 +16,8 @@ class DownloadEngine:
 
     DEFAULT_STRIKE_OFFSET = 0
 
+    MAX_RETRIES = 3
+
     def __init__(self):
 
         self.planner = DownloadPlanner()
@@ -60,6 +62,23 @@ class DownloadEngine:
 
         job = self.build_job(record)
 
+        reconciled = self.repo.reconcile_stale_running_batches(job_id)
+
+        if not self.has_retryable_work(job):
+
+            # Only re-close the job if reconciliation changed something, or
+            # it was never actually closed out (e.g. crashed before its
+            # first execute() finished) - otherwise this repeats forever on
+            # an already-terminal FAILED job, rewriting completed_at every
+            # time someone calls resume() on it.
+            if reconciled or record["status"] not in (self.COMPLETED_STATUS, "FAILED"):
+
+                self.finish_job(job_id)
+
+            print(f"Job {job_id} has no retryable work left. Nothing to resume.")
+
+            return
+
         print(f"Resuming Job : {job_id}")
 
         self.execute(job)
@@ -95,6 +114,8 @@ class DownloadEngine:
         print("=" * 60)
         print(f"Starting Job : {job.job_id}")
         print("=" * 60)
+
+        self.repo.reconcile_stale_running_batches(job.job_id)
 
         self.repo.mark_job_started(job.job_id)
 
@@ -177,6 +198,20 @@ class DownloadEngine:
 
             return
 
+        if self.is_retry_limit_exceeded(
+            job=job,
+            batch=batch,
+            option_type=option_type,
+            strike_offset=strike_offset,
+        ):
+
+            print(
+                f"Skipping {option_type}: retry limit "
+                f"({self.MAX_RETRIES}) exceeded."
+            )
+
+            return
+
         self.repo.create_manifest_entry(
             job_id=job.job_id,
             batch_number=batch.batch_number,
@@ -236,3 +271,52 @@ class DownloadEngine:
         )
 
         return status == self.COMPLETED_STATUS
+
+    def is_retry_limit_exceeded(
+        self,
+        job: DownloadJob,
+        batch: DownloadBatch,
+        option_type: str,
+        strike_offset: int,
+    ) -> bool:
+
+        retry_count = self.repo.get_manifest_retry_count(
+            job_id=job.job_id,
+            batch_number=batch.batch_number,
+            option_type=option_type,
+            strike_offset=strike_offset,
+        )
+
+        return retry_count >= self.MAX_RETRIES
+
+    def has_retryable_work(self, job: DownloadJob) -> bool:
+
+        batches = self.planner.create_plan(job)
+
+        for batch in batches:
+
+            for option_type in job.option_types:
+
+                strike_offset = self.DEFAULT_STRIKE_OFFSET
+
+                if self.is_download_completed(
+                    job=job,
+                    batch=batch,
+                    option_type=option_type,
+                    strike_offset=strike_offset,
+                ):
+
+                    continue
+
+                if self.is_retry_limit_exceeded(
+                    job=job,
+                    batch=batch,
+                    option_type=option_type,
+                    strike_offset=strike_offset,
+                ):
+
+                    continue
+
+                return True
+
+        return False

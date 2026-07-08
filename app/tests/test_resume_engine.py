@@ -16,6 +16,7 @@ class FakeRepository:
 
         self.jobs = {}
         self.manifest = {}
+        self.job_close_count = 0
 
     # -- manifest --
 
@@ -46,6 +47,7 @@ class FakeRepository:
         self.manifest[key] = {
             "status": "PENDING",
             "inserted_rows": 0,
+            "retry_count": 0,
         }
 
     def get_manifest_status(self, job_id, batch_number, option_type, strike_offset):
@@ -56,11 +58,35 @@ class FakeRepository:
 
         return entry["status"] if entry else None
 
+    def get_manifest_retry_count(
+        self, job_id, batch_number, option_type, strike_offset
+    ):
+
+        key = self.manifest_key(job_id, batch_number, option_type, strike_offset)
+
+        entry = self.manifest.get(key)
+
+        return entry["retry_count"] if entry else 0
+
+    def reconcile_stale_running_batches(self, job_id):
+
+        reconciled = False
+
+        for key, entry in self.manifest.items():
+
+            if key[0] == job_id and entry["status"] == "RUNNING":
+
+                entry["status"] = "FAILED"
+                reconciled = True
+
+        return reconciled
+
     def mark_batch_started(self, job_id, batch_number, option_type, strike_offset):
 
         key = self.manifest_key(job_id, batch_number, option_type, strike_offset)
 
         self.manifest[key]["status"] = "RUNNING"
+        self.manifest[key]["retry_count"] += 1
 
     def mark_batch_completed(
         self,
@@ -183,21 +209,25 @@ class FakeRepository:
 
     def mark_job_completed(self, job_id, completed_batches, failed_batches, total_rows):
 
+        self.job_close_count += 1
+
         job = self.jobs[job_id]
         job["status"] = "COMPLETED"
         job["completed_batches"] = completed_batches
         job["failed_batches"] = failed_batches
         job["total_rows"] = total_rows
-        job["completed_at"] = "FINISHED"
+        job["completed_at"] = f"FINISHED-{self.job_close_count}"
 
     def mark_job_failed(self, job_id, completed_batches, failed_batches, total_rows):
+
+        self.job_close_count += 1
 
         job = self.jobs[job_id]
         job["status"] = "FAILED"
         job["completed_batches"] = completed_batches
         job["failed_batches"] = failed_batches
         job["total_rows"] = total_rows
-        job["completed_at"] = "FINISHED"
+        job["completed_at"] = f"FINISHED-{self.job_close_count}"
 
 
 class SuccessfulDownloadService:
