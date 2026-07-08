@@ -466,22 +466,11 @@ Preserve the existing architecture.
 
 ✓ Retry Engine (TASK-021.8)
 
+✓ Progress Engine (TASK-021.9)
+
 ---
 
 # Current Task
-
-TASK-021.9
-
-Progress Engine
-
-Display:
-
-- Progress
-- ETA
-- Rows downloaded
-- Speed
-
----
 
 TASK-022
 
