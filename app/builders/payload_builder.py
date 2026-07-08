@@ -8,6 +8,10 @@ from app.models.download_batch import DownloadBatch
 
 class PayloadBuilder:
 
+    INSTRUMENT = "OPTIDX"
+
+    INTERVAL = 1
+
     @staticmethod
     def build(
         job: DownloadJob,
@@ -22,7 +26,7 @@ class PayloadBuilder:
 
             "securityId": 13,
 
-            "instrument": "OPTIDX",
+            "instrument": PayloadBuilder.INSTRUMENT,
 
             "expiryFlag": job.expiry_type,
 
@@ -36,7 +40,7 @@ class PayloadBuilder:
 
             "drvOptionType": option_type,
 
-            "interval": 1,
+            "interval": PayloadBuilder.INTERVAL,
 
             "requiredData": [
 

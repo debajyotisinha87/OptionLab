@@ -4,6 +4,7 @@ Download Engine
 
 from app.builders.payload_builder import PayloadBuilder
 from app.models.download_batch import DownloadBatch
+from app.models.enums.job_status import JobStatus
 from app.models.job import DownloadJob
 from app.planner.download_planner import DownloadPlanner
 from app.services.download_service import DownloadService
@@ -23,23 +24,109 @@ class DownloadEngine:
 
         self.repo.create_option_data_table()
         self.repo.create_download_manifest_table()
+        self.repo.create_download_jobs_table()
 
     def run(self, job: DownloadJob):
+
+        self.repo.save_job(
+            job_id=job.job_id,
+            underlying=job.underlying,
+            instrument=PayloadBuilder.INSTRUMENT,
+            expiry_type=job.expiry_type,
+            option_types=",".join(job.option_types),
+            strike_from=job.strike_from,
+            strike_to=job.strike_to,
+            interval=PayloadBuilder.INTERVAL,
+            start_date=job.start_date,
+            end_date=job.end_date,
+            created_at=job.created_at,
+        )
+
+        self.execute(job)
+
+    def resume(self, job_id: str):
+
+        record = self.repo.get_job(job_id)
+
+        if record is None:
+
+            raise ValueError(f"Unknown job_id: {job_id}")
+
+        if record["status"] == self.COMPLETED_STATUS:
+
+            print(f"Job {job_id} is already completed. Nothing to resume.")
+
+            return
+
+        job = self.build_job(record)
+
+        print(f"Resuming Job : {job_id}")
+
+        self.execute(job)
+
+    def load_job(self, job_id: str) -> DownloadJob:
+
+        record = self.repo.get_job(job_id)
+
+        if record is None:
+
+            raise ValueError(f"Unknown job_id: {job_id}")
+
+        return self.build_job(record)
+
+    @staticmethod
+    def build_job(record: dict) -> DownloadJob:
+
+        return DownloadJob(
+            job_id=record["job_id"],
+            underlying=record["underlying"],
+            expiry_type=record["expiry_type"],
+            option_types=record["option_types"].split(","),
+            strike_from=record["strike_from"],
+            strike_to=record["strike_to"],
+            start_date=str(record["start_date"]),
+            end_date=str(record["end_date"]),
+            created_at=record["created_at"],
+            status=JobStatus(record["status"]),
+        )
+
+    def execute(self, job: DownloadJob):
 
         print("=" * 60)
         print(f"Starting Job : {job.job_id}")
         print("=" * 60)
 
+        self.repo.mark_job_started(job.job_id)
+
         batches = self.planner.create_plan(job)
+
+        self.repo.set_job_total_batches(
+            job.job_id,
+            len(batches) * len(job.option_types),
+        )
 
         print(f"Total Batches : {len(batches)}")
 
         for batch in batches:
             self.process_batch(job, batch)
 
+        self.finish_job(job.job_id)
+
         print("=" * 60)
         print("Job Completed")
         print("=" * 60)
+
+    def finish_job(self, job_id: str):
+
+        progress = self.repo.get_job_progress(job_id)
+
+        if progress["failed_batches"] > 0:
+
+            self.repo.mark_job_failed(job_id, **progress)
+
+            return
+
+        self.repo.mark_job_completed(job_id, **progress)
 
     def process_batch(
         self,
