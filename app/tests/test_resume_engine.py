@@ -230,6 +230,25 @@ class FakeRepository:
         job["completed_at"] = f"FINISHED-{self.job_close_count}"
 
 
+class FakeProgressReporter:
+
+    def reset(self, total_units, description, initial_rows=0):
+
+        pass
+
+    def record(self, inserted_rows=0):
+
+        pass
+
+    def write(self, message):
+
+        pass
+
+    def close(self):
+
+        pass
+
+
 class SuccessfulDownloadService:
 
     def download(self, payload):
@@ -291,6 +310,7 @@ def create_test_engine(download_service):
     engine.planner = DownloadPlanner()
     engine.repo = FakeRepository()
     engine.service = download_service
+    engine.progress = FakeProgressReporter()
 
     return engine
 

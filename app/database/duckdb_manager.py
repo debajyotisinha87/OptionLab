@@ -28,5 +28,3 @@ class DuckDBManager:
             FROM option_df
             """
         )
-
-        print(f"Inserted {len(df)} rows")

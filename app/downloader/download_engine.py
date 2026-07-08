@@ -3,6 +3,7 @@ Download Engine
 """
 
 from app.builders.payload_builder import PayloadBuilder
+from app.downloader.progress_reporter import ProgressReporter
 from app.models.download_batch import DownloadBatch
 from app.models.enums.job_status import JobStatus
 from app.models.job import DownloadJob
@@ -23,6 +24,7 @@ class DownloadEngine:
         self.planner = DownloadPlanner()
         self.service = DownloadService()
         self.repo = self.service.repo
+        self.progress = ProgressReporter()
 
         self.repo.create_option_data_table()
         self.repo.create_download_manifest_table()
@@ -121,15 +123,28 @@ class DownloadEngine:
 
         batches = self.planner.create_plan(job)
 
-        self.repo.set_job_total_batches(
-            job.job_id,
-            len(batches) * len(job.option_types),
-        )
+        total_units = len(batches) * len(job.option_types)
+
+        self.repo.set_job_total_batches(job.job_id, total_units)
 
         print(f"Total Batches : {len(batches)}")
 
-        for batch in batches:
-            self.process_batch(job, batch)
+        already_inserted_rows = self.repo.get_job_progress(job.job_id)["total_rows"]
+
+        self.progress.reset(
+            total_units=total_units,
+            description=f"Job {job.job_id}",
+            initial_rows=already_inserted_rows,
+        )
+
+        try:
+
+            for batch in batches:
+                self.process_batch(job, batch)
+
+        finally:
+
+            self.progress.close()
 
         self.finish_job(job.job_id)
 
@@ -155,10 +170,12 @@ class DownloadEngine:
         batch: DownloadBatch,
     ):
 
-        print("-" * 60)
-        print(f"Processing Batch : {batch.batch_number}")
-        print(f"Date Range       : {batch.from_date} -> {batch.to_date}")
-        print("-" * 60)
+        self.progress.write("-" * 60)
+        self.progress.write(f"Processing Batch : {batch.batch_number}")
+        self.progress.write(
+            f"Date Range       : {batch.from_date} -> {batch.to_date}"
+        )
+        self.progress.write("-" * 60)
 
         for option_type in job.option_types:
 
@@ -168,7 +185,7 @@ class DownloadEngine:
                 option_type=option_type,
             )
 
-        print("Batch completed.\n")
+        self.progress.write("Batch completed.\n")
 
     def process_option_type(
         self,
@@ -177,7 +194,7 @@ class DownloadEngine:
         option_type: str,
     ):
 
-        print(f"Downloading {option_type}...")
+        self.progress.write(f"Downloading {option_type}...")
 
         payload = PayloadBuilder.build(
             job=job,
@@ -194,7 +211,9 @@ class DownloadEngine:
             strike_offset=strike_offset,
         ):
 
-            print(f"Skipping {option_type}: already completed.")
+            self.progress.write(f"Skipping {option_type}: already completed.")
+
+            self.progress.record()
 
             return
 
@@ -205,10 +224,12 @@ class DownloadEngine:
             strike_offset=strike_offset,
         ):
 
-            print(
+            self.progress.write(
                 f"Skipping {option_type}: retry limit "
                 f"({self.MAX_RETRIES}) exceeded."
             )
+
+            self.progress.record()
 
             return
 
@@ -245,6 +266,8 @@ class DownloadEngine:
                 inserted_rows=result["inserted_rows"],
             )
 
+            self.progress.record(inserted_rows=result["inserted_rows"])
+
             return
 
         self.repo.mark_batch_failed(
@@ -254,6 +277,8 @@ class DownloadEngine:
             strike_offset=strike_offset,
             error_message=result["error"],
         )
+
+        self.progress.record()
 
     def is_download_completed(
         self,

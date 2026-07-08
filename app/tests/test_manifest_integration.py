@@ -37,6 +37,25 @@ class FakeRepository:
         self.events.append(("FAILED", kwargs))
 
 
+class FakeProgressReporter:
+
+    def reset(self, total_units, description, initial_rows=0):
+
+        pass
+
+    def record(self, inserted_rows=0):
+
+        pass
+
+    def write(self, message):
+
+        pass
+
+    def close(self):
+
+        pass
+
+
 class SuccessfulDownloadService:
 
     def download(self, payload):
@@ -108,6 +127,7 @@ def create_test_engine(download_service, manifest_status=None):
     engine = DownloadEngine.__new__(DownloadEngine)
     engine.repo = FakeRepository(manifest_status=manifest_status)
     engine.service = download_service
+    engine.progress = FakeProgressReporter()
 
     return engine
 

@@ -29,8 +29,6 @@ class RollingOptionAPI(DhanAPI):
             payload=payload,
         )
 
-        print(f"\nStatus Code : {response.status_code}")
-
         try:
             return response.json()
         except Exception:
