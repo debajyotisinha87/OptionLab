@@ -464,19 +464,11 @@ Preserve the existing architecture.
 
 ✓ Resume Engine (TASK-021.7)
 
+✓ Retry Engine (TASK-021.8)
+
 ---
 
 # Current Task
-
-TASK-021.8
-
-Retry Engine
-
-Retry failed downloads.
-
-Track retry count.
-
----
 
 TASK-021.9
 
