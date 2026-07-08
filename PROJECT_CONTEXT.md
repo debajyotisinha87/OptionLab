@@ -460,63 +460,13 @@ Preserve the existing architecture.
 
 ✓ Project Documentation
 
+✓ Manifest Integration (TASK-021.6)
+
+✓ Resume Engine (TASK-021.7)
+
 ---
 
 # Current Task
-
-TASK-021.6
-
-Manifest Integration
-
-Goal
-
-Track every download batch.
-
-State transitions:
-
-```
-PENDING
-
-↓
-
-RUNNING
-
-↓
-
-COMPLETED
-```
-
-or
-
-```
-PENDING
-
-↓
-
-RUNNING
-
-↓
-
-FAILED
-```
-
-Future tasks depend on this.
-
----
-
-# Upcoming Tasks
-
-TASK-021.7
-
-Resume Engine
-
-Read manifest.
-
-Skip completed batches.
-
-Continue interrupted downloads.
-
----
 
 TASK-021.8
 
