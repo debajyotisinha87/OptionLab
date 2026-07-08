@@ -29,4 +29,4 @@ class DuckDBManager:
             """
         )
 
-        print(f"✓ Inserted {len(df)} rows")
+        print(f"Inserted {len(df)} rows")

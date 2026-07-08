@@ -24,4 +24,4 @@ df = DataNormalizer.normalize(
 
 DataValidator.validate(df)
 
-print("✓ Validation Passed")
+print("Validation Passed")

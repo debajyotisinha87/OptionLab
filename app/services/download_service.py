@@ -58,7 +58,7 @@ class DownloadService:
 
             self.repo.insert_option_data(df)
 
-            print(f"✓ Inserted {len(df)} rows")
+            print(f"Inserted {len(df)} rows")
 
             return {
                 "success": True,

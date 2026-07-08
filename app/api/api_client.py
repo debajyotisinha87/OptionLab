@@ -36,9 +36,9 @@ class DhanAPI:
         print("\nStatus Code :", response.status_code)
 
         if response.status_code == 200:
-            print("✅ Connected Successfully")
+            print("Connected Successfully")
         else:
-            print("❌ Connection Failed")
+            print("Connection Failed")
 
         try:
             print("\nResponse:")
