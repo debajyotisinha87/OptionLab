@@ -101,8 +101,8 @@ def create_test_job():
         underlying="NIFTY",
         expiry_type="MONTH",
         option_types=["CALL"],
-        strike_from=-1,
-        strike_to=1,
+        strike_from=0,
+        strike_to=0,
         start_date="2025-01-01",
         end_date="2025-01-01",
         created_at=datetime.now(),
@@ -136,6 +136,7 @@ def test_manifest_completed_flow():
         job=create_test_job(),
         batch=create_test_batch(),
         option_type="CALL",
+        strike_offset=0,
     )
 
     statuses = [
@@ -163,6 +164,7 @@ def test_manifest_failed_flow():
         job=create_test_job(),
         batch=create_test_batch(),
         option_type="CALL",
+        strike_offset=0,
     )
 
     statuses = [
@@ -193,6 +195,7 @@ def test_completed_manifest_entry_is_skipped():
         job=create_test_job(),
         batch=create_test_batch(),
         option_type="CALL",
+        strike_offset=0,
     )
 
     assert service.download_count == 0

@@ -4,6 +4,7 @@ Download Engine
 
 from app.builders.payload_builder import PayloadBuilder
 from app.config.logging_config import get_logger
+from app.constants.underlyings import SUPPORTED_UNDERLYINGS
 from app.downloader.progress_reporter import ProgressReporter
 from app.models.download_batch import DownloadBatch
 from app.models.enums.job_status import JobStatus
@@ -17,8 +18,6 @@ logger = get_logger()
 class DownloadEngine:
 
     COMPLETED_STATUS = "COMPLETED"
-
-    DEFAULT_STRIKE_OFFSET = 0
 
     MAX_RETRIES = 3
 
@@ -34,6 +33,8 @@ class DownloadEngine:
         self.repo.create_download_jobs_table()
 
     def run(self, job: DownloadJob):
+
+        self.validate_job(job)
 
         self.repo.save_job(
             job_id=job.job_id,
@@ -66,6 +67,8 @@ class DownloadEngine:
             return
 
         job = self.build_job(record)
+
+        self.validate_job(job)
 
         reconciled = self.repo.reconcile_stale_running_batches(job_id)
 
@@ -114,6 +117,63 @@ class DownloadEngine:
             status=JobStatus(record["status"]),
         )
 
+    @staticmethod
+    def validate_job(job: DownloadJob):
+        """Validates strike-range/underlying invariants that aren't
+        enforced by the DownloadJob dataclass itself. Both run() and
+        resume() call this before any manifest row is created or the
+        job is marked RUNNING - has_retryable_work()'s strike loop
+        would otherwise treat an invalid range as silently "no work",
+        and a bad underlying would only surface deep inside execute()
+        (after mark_job_started()), leaving the job stuck in RUNNING
+        forever since finish_job() is never reached on an unhandled
+        exception."""
+
+        if job.underlying not in SUPPORTED_UNDERLYINGS:
+
+            raise ValueError(f"Unsupported underlying: {job.underlying}")
+
+        if job.strike_from > job.strike_to:
+
+            raise ValueError(
+                f"strike_from ({job.strike_from}) must be <= "
+                f"strike_to ({job.strike_to})"
+            )
+
+        for offset in (job.strike_from, job.strike_to):
+
+            if (
+                offset < PayloadBuilder.MIN_STRIKE_OFFSET
+                or offset > PayloadBuilder.MAX_STRIKE_OFFSET
+            ):
+
+                raise ValueError(
+                    f"strike offset {offset} is outside DhanHQ's "
+                    f"supported range ({PayloadBuilder.MIN_STRIKE_OFFSET} "
+                    f"to {PayloadBuilder.MAX_STRIKE_OFFSET})"
+                )
+
+    @staticmethod
+    def strike_offsets(job: DownloadJob) -> range:
+        """The single source of truth for which strike offsets a job
+        covers, so the count (execute()) and the iteration
+        (process_batch()/has_retryable_work()) can never drift apart."""
+
+        return range(job.strike_from, job.strike_to + 1)
+
+    @classmethod
+    def iter_units(cls, job: DownloadJob):
+        """Yields (option_type, strike_offset) for every unit a single
+        batch must download, shared by process_batch() and
+        has_retryable_work() so their iteration order/shape can't
+        diverge."""
+
+        for option_type in job.option_types:
+
+            for strike_offset in cls.strike_offsets(job):
+
+                yield option_type, strike_offset
+
     def execute(self, job: DownloadJob):
 
         logger.info("=" * 60)
@@ -126,7 +186,9 @@ class DownloadEngine:
 
         batches = self.planner.create_plan(job)
 
-        total_units = len(batches) * len(job.option_types)
+        units_per_batch = len(job.option_types) * len(self.strike_offsets(job))
+
+        total_units = len(batches) * units_per_batch
 
         self.repo.set_job_total_batches(job.job_id, total_units)
 
@@ -180,12 +242,13 @@ class DownloadEngine:
         )
         logger.info("-" * 60)
 
-        for option_type in job.option_types:
+        for option_type, strike_offset in self.iter_units(job):
 
             self.process_option_type(
                 job=job,
                 batch=batch,
                 option_type=option_type,
+                strike_offset=strike_offset,
             )
 
         logger.info("Batch completed.")
@@ -195,17 +258,19 @@ class DownloadEngine:
         job: DownloadJob,
         batch: DownloadBatch,
         option_type: str,
+        strike_offset: int,
     ):
 
-        logger.info(f"Downloading {option_type}...")
+        strike_label = PayloadBuilder.strike_label(strike_offset)
+
+        logger.info(f"Downloading {option_type} ({strike_label})...")
 
         payload = PayloadBuilder.build(
             job=job,
             batch=batch,
             option_type=option_type,
+            strike_offset=strike_offset,
         )
-
-        strike_offset = self.DEFAULT_STRIKE_OFFSET
 
         if self.is_download_completed(
             job=job,
@@ -214,7 +279,9 @@ class DownloadEngine:
             strike_offset=strike_offset,
         ):
 
-            logger.info(f"Skipping {option_type}: already completed.")
+            logger.info(
+                f"Skipping {option_type} ({strike_label}): already completed."
+            )
 
             self.progress.record()
 
@@ -228,8 +295,8 @@ class DownloadEngine:
         ):
 
             logger.warning(
-                f"Skipping {option_type}: retry limit "
-                f"({self.MAX_RETRIES}) exceeded."
+                f"Skipping {option_type} ({strike_label}): "
+                f"retry limit ({self.MAX_RETRIES}) exceeded."
             )
 
             self.progress.record()
@@ -281,7 +348,10 @@ class DownloadEngine:
             error_message=result["error"],
         )
 
-        logger.error(f"{option_type} download failed: {result['error']}")
+        logger.error(
+            f"{option_type} ({strike_label}) download failed: "
+            f"{result['error']}"
+        )
 
         self.progress.record()
 
@@ -325,9 +395,7 @@ class DownloadEngine:
 
         for batch in batches:
 
-            for option_type in job.option_types:
-
-                strike_offset = self.DEFAULT_STRIKE_OFFSET
+            for option_type, strike_offset in self.iter_units(job):
 
                 if self.is_download_completed(
                     job=job,

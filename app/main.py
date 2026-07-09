@@ -10,11 +10,13 @@ import sys
 from datetime import datetime
 
 from app.api.api_client import DhanAPI
+from app.builders.payload_builder import PayloadBuilder
 from app.config.logging_config import get_logger
 from app.constants.app_info import (
     APP_NAME,
     APP_VERSION,
 )
+from app.constants.underlyings import SUPPORTED_UNDERLYINGS
 from app.downloader.download_engine import DownloadEngine
 from app.models.job import DownloadJob
 
@@ -30,6 +32,18 @@ def banner():
     logger.info("=" * 60)
 
 
+def _sanitize_for_stderr(value: str) -> str:
+    """argparse writes ArgumentTypeError messages straight to
+    sys.stderr, bypassing the logger's cp1252-safe sanitization, so any
+    raw user input embedded in such a message must be sanitized here
+    first or it crashes with a raw UnicodeEncodeError instead of a
+    clean usage error."""
+
+    encoding = getattr(sys.stderr, "encoding", None) or "ascii"
+
+    return value.encode(encoding, errors="replace").decode(encoding)
+
+
 def _parse_date(value: str) -> str:
 
     try:
@@ -38,15 +52,9 @@ def _parse_date(value: str) -> str:
 
     except ValueError:
 
-        # argparse writes this message straight to sys.stderr, bypassing
-        # the logger's cp1252-safe sanitization, so a non-ASCII value
-        # must be sanitized here or it crashes with a raw
-        # UnicodeEncodeError instead of a clean usage error.
-        encoding = getattr(sys.stderr, "encoding", None) or "ascii"
-        safe_value = value.encode(encoding, errors="replace").decode(encoding)
-
         raise argparse.ArgumentTypeError(
-            f"Invalid date '{safe_value}': expected {DATE_FORMAT}"
+            f"Invalid date '{_sanitize_for_stderr(value)}': "
+            f"expected {DATE_FORMAT}"
         )
 
     return value
@@ -64,23 +72,63 @@ def _parse_non_blank(value: str) -> str:
 
 
 # Per DhanHQ's /v2/charts/rollingoption docs: expiryFlag accepts only
-# WEEK/MONTH, drvOptionType accepts only CALL/PUT.
+# WEEK/MONTH, drvOptionType accepts only CALL/PUT. Strike-offset bounds
+# live on PayloadBuilder, the single source of truth for DhanHQ's
+# ATM-10..ATM+10 range for index options.
 VALID_EXPIRY_TYPES = ("WEEK", "MONTH")
 VALID_OPTION_TYPES = ("CALL", "PUT")
 
 
-def _parse_expiry_type(value: str) -> str:
+def _make_choice_parser(valid_choices):
+    """Builds an argparse type= function that strips/uppercases the
+    input and validates it against a fixed set of choices."""
 
-    normalized = value.strip().upper()
+    def _parse(value: str) -> str:
 
-    if normalized not in VALID_EXPIRY_TYPES:
+        normalized = value.strip().upper()
+
+        if normalized not in valid_choices:
+
+            raise argparse.ArgumentTypeError(
+                f"invalid choice: '{_sanitize_for_stderr(value)}' "
+                f"(choose from {', '.join(sorted(valid_choices))})"
+            )
+
+        return normalized
+
+    return _parse
+
+
+_parse_expiry_type = _make_choice_parser(VALID_EXPIRY_TYPES)
+
+_parse_underlying = _make_choice_parser(SUPPORTED_UNDERLYINGS)
+
+
+def _parse_strike_offset(value: str) -> int:
+
+    try:
+
+        offset = int(value)
+
+    except ValueError:
 
         raise argparse.ArgumentTypeError(
-            f"invalid choice: '{value}' "
-            f"(choose from {', '.join(VALID_EXPIRY_TYPES)})"
+            f"invalid int value: '{_sanitize_for_stderr(value)}'"
         )
 
-    return normalized
+    if (
+        offset < PayloadBuilder.MIN_STRIKE_OFFSET
+        or offset > PayloadBuilder.MAX_STRIKE_OFFSET
+    ):
+
+        raise argparse.ArgumentTypeError(
+            f"strike offset must be between "
+            f"{PayloadBuilder.MIN_STRIKE_OFFSET} and "
+            f"{PayloadBuilder.MAX_STRIKE_OFFSET} "
+            "(DhanHQ's supported range for index options)"
+        )
+
+    return offset
 
 
 def _parse_option_types(value: str) -> list[str]:
@@ -105,8 +153,10 @@ def _parse_option_types(value: str) -> list[str]:
 
     if invalid:
 
+        safe_invalid = [_sanitize_for_stderr(item) for item in invalid]
+
         raise argparse.ArgumentTypeError(
-            f"invalid option type(s): {', '.join(invalid)} "
+            f"invalid option type(s): {', '.join(safe_invalid)} "
             f"(choose from {', '.join(VALID_OPTION_TYPES)})"
         )
 
@@ -132,7 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start a new historical options download job",
     )
     download_parser.add_argument(
-        "--underlying", required=True, type=_parse_non_blank
+        "--underlying",
+        required=True,
+        type=_parse_underlying,
+        help=f"one of {', '.join(sorted(SUPPORTED_UNDERLYINGS))}",
     )
     download_parser.add_argument(
         "--expiry-type",
@@ -146,8 +199,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=_parse_option_types,
         help="Comma-separated option types, e.g. CALL,PUT",
     )
-    download_parser.add_argument("--strike-from", required=True, type=int)
-    download_parser.add_argument("--strike-to", required=True, type=int)
+    download_parser.add_argument(
+        "--strike-from", required=True, type=_parse_strike_offset
+    )
+    download_parser.add_argument(
+        "--strike-to", required=True, type=_parse_strike_offset
+    )
     download_parser.add_argument(
         "--start-date", required=True, type=_parse_date
     )
@@ -203,6 +260,13 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "download" and args.strike_from > args.strike_to:
+
+        parser.error(
+            f"--strike-from ({args.strike_from}) must be <= "
+            f"--strike-to ({args.strike_to})"
+        )
 
     banner()
 

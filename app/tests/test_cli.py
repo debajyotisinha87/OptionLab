@@ -10,6 +10,8 @@ from app.main import (
     _parse_expiry_type,
     _parse_non_blank,
     _parse_option_types,
+    _parse_strike_offset,
+    _parse_underlying,
     build_parser,
     main,
 )
@@ -270,6 +272,87 @@ def test_build_parser_rejects_an_invalid_expiry_type():
     raise AssertionError("Expected SystemExit for an invalid --expiry-type")
 
 
+def test_parse_underlying_accepts_supported_underlyings_case_insensitively():
+
+    assert _parse_underlying("NIFTY") == "NIFTY"
+    assert _parse_underlying("banknifty") == "BANKNIFTY"
+    assert _parse_underlying("  Sensex  ") == "SENSEX"
+
+
+def test_parse_underlying_rejects_an_unsupported_value():
+
+    try:
+        _parse_underlying("RELIANCE")
+    except argparse.ArgumentTypeError:
+        return
+
+    raise AssertionError("Expected ArgumentTypeError for an unsupported underlying")
+
+
+def test_build_parser_rejects_an_invalid_underlying():
+
+    parser = build_parser()
+
+    try:
+        parser.parse_args([
+            "download",
+            "--underlying", "RELIANCE",
+            "--expiry-type", "MONTH",
+            "--option-types", "CALL",
+            "--strike-from", "0",
+            "--strike-to", "0",
+            "--start-date", "2025-01-01",
+            "--end-date", "2025-01-31",
+        ])
+    except SystemExit as exc:
+        assert exc.code != 0
+        return
+
+    raise AssertionError("Expected SystemExit for an invalid --underlying")
+
+
+def test_parse_strike_offset_rejects_out_of_range_values():
+
+    assert _parse_strike_offset("10") == 10
+    assert _parse_strike_offset("-10") == -10
+
+    try:
+        _parse_strike_offset("11")
+    except argparse.ArgumentTypeError:
+        pass
+    else:
+        raise AssertionError("Expected ArgumentTypeError for an out-of-range strike offset")
+
+    try:
+        _parse_strike_offset("-11")
+    except argparse.ArgumentTypeError:
+        return
+
+    raise AssertionError("Expected ArgumentTypeError for an out-of-range strike offset")
+
+
+def test_main_rejects_strike_from_greater_than_strike_to():
+
+    try:
+        main([
+            "download",
+            "--underlying", "NIFTY",
+            "--expiry-type", "MONTH",
+            "--option-types", "CALL",
+            "--strike-from", "5",
+            "--strike-to", "-5",
+            "--start-date", "2025-01-01",
+            "--end-date", "2025-01-31",
+        ])
+    except SystemExit as exc:
+        assert exc.code != 0
+        return
+
+    raise AssertionError(
+        "Expected SystemExit when --strike-from > --strike-to"
+    )
+
+
 def test_parse_non_blank_rejects_blank_and_strips_whitespace():
 
     assert _parse_non_blank("NIFTY") == "NIFTY"
@@ -306,6 +389,52 @@ def test_parse_date_sanitizes_unencodable_characters_in_its_error_message():
     # must not raise - this is exactly the crash the fix prevents
     message.encode("ascii", errors="strict")
     assert "म" not in message
+
+
+def test_parse_underlying_sanitizes_unencodable_characters_in_its_error_message():
+
+    # _parse_underlying (and _parse_expiry_type, which shares the same
+    # _make_choice_parser factory) previously re-introduced the exact
+    # cp1252/ascii UnicodeEncodeError crash that _parse_date was fixed
+    # for - this reproduces it the same deterministic way.
+    original_stderr = sys.stderr
+    sys.stderr = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+
+    try:
+        try:
+            _parse_underlying("निफ्टी")  # Devanagari, not a real underlying
+        except argparse.ArgumentTypeError as exc:
+            message = str(exc)
+        else:
+            raise AssertionError(
+                "Expected ArgumentTypeError for an unsupported underlying"
+            )
+    finally:
+        sys.stderr = original_stderr
+
+    message.encode("ascii", errors="strict")
+    assert "नि" not in message
+
+
+def test_parse_option_types_sanitizes_unencodable_characters_in_its_error_message():
+
+    original_stderr = sys.stderr
+    sys.stderr = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+
+    try:
+        try:
+            _parse_option_types("पूट")  # Devanagari, not CALL/PUT
+        except argparse.ArgumentTypeError as exc:
+            message = str(exc)
+        else:
+            raise AssertionError(
+                "Expected ArgumentTypeError for an unsupported option type"
+            )
+    finally:
+        sys.stderr = original_stderr
+
+    message.encode("ascii", errors="strict")
+    assert "पू" not in message
 
 
 def test_download_defaults_job_id_from_underlying_and_dates():
@@ -498,8 +627,15 @@ if __name__ == "__main__":
     test_parse_expiry_type_rejects_an_unsupported_value()
     test_parse_option_types_rejects_unsupported_option_types()
     test_build_parser_rejects_an_invalid_expiry_type()
+    test_parse_underlying_accepts_supported_underlyings_case_insensitively()
+    test_parse_underlying_rejects_an_unsupported_value()
+    test_build_parser_rejects_an_invalid_underlying()
+    test_parse_strike_offset_rejects_out_of_range_values()
+    test_main_rejects_strike_from_greater_than_strike_to()
     test_parse_non_blank_rejects_blank_and_strips_whitespace()
     test_parse_date_sanitizes_unencodable_characters_in_its_error_message()
+    test_parse_underlying_sanitizes_unencodable_characters_in_its_error_message()
+    test_parse_option_types_sanitizes_unencodable_characters_in_its_error_message()
     test_download_defaults_job_id_from_underlying_and_dates()
     test_download_respects_an_explicit_job_id()
     test_resume_dispatches_to_engine_resume()

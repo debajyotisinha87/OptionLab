@@ -285,15 +285,20 @@ class CountingDownloadService:
         }
 
 
-def create_test_job(job_id="JOB-RESUME-TEST", option_types=None):
+def create_test_job(
+    job_id="JOB-RESUME-TEST",
+    option_types=None,
+    strike_from=0,
+    strike_to=0,
+):
 
     return DownloadJob(
         job_id=job_id,
         underlying="NIFTY",
         expiry_type="MONTH",
         option_types=option_types or ["CALL"],
-        strike_from=-1,
-        strike_to=1,
+        strike_from=strike_from,
+        strike_to=strike_to,
         start_date="2025-01-01",
         end_date="2025-01-01",
         created_at=datetime.now(),
@@ -324,6 +329,139 @@ def test_run_persists_job_and_marks_completed():
     assert job["completed_batches"] == 1
     assert job["failed_batches"] == 0
     assert job["total_rows"] == 10
+
+
+def test_run_downloads_every_strike_in_the_requested_range():
+
+    service = CountingDownloadService()
+    engine = create_test_engine(service)
+
+    engine.run(create_test_job(strike_from=-1, strike_to=1))
+
+    # 1 date-range batch x 1 option_type x 3 strikes (-1, 0, +1)
+    assert service.download_count == 3
+
+    job = engine.repo.get_job("JOB-RESUME-TEST")
+
+    assert job["status"] == "COMPLETED"
+    assert job["total_batches"] == 3
+    assert job["completed_batches"] == 3
+
+
+def test_run_rejects_an_unsupported_underlying_before_persisting():
+
+    engine = create_test_engine(SuccessfulDownloadService())
+
+    job = create_test_job()
+    job.underlying = "RELIANCE"
+
+    try:
+        engine.run(job)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Expected ValueError for an unsupported underlying")
+
+    # Must fail before the job is ever persisted.
+    assert engine.repo.get_job("JOB-RESUME-TEST") is None
+
+
+def test_run_rejects_an_inverted_strike_range_before_persisting():
+
+    engine = create_test_engine(SuccessfulDownloadService())
+
+    try:
+        engine.run(create_test_job(strike_from=5, strike_to=-5))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Expected ValueError for strike_from > strike_to")
+
+    assert engine.repo.get_job("JOB-RESUME-TEST") is None
+
+
+def test_run_rejects_an_out_of_bounds_strike_offset():
+
+    engine = create_test_engine(SuccessfulDownloadService())
+
+    try:
+        engine.run(create_test_job(strike_from=-15, strike_to=-15))
+    except ValueError:
+        return
+
+    raise AssertionError("Expected ValueError for an out-of-bounds strike offset")
+
+
+def test_resume_rejects_a_legacy_job_with_a_bad_underlying_instead_of_looping_forever():
+
+    # Simulates a job persisted before underlying validation existed,
+    # bypassing run()'s upfront validate_job() entirely - this is
+    # exactly the scenario that used to leave a job stuck in RUNNING
+    # forever, since PayloadBuilder's ValueError used to only surface
+    # deep inside execute() (after mark_job_started()), skipping
+    # finish_job() entirely.
+    engine = create_test_engine(SuccessfulDownloadService())
+
+    engine.repo.save_job(
+        job_id="LEGACY-JOB",
+        underlying="RELIANCE",
+        instrument="OPTIDX",
+        expiry_type="MONTH",
+        option_types="CALL",
+        strike_from=0,
+        strike_to=0,
+        interval=1,
+        start_date="2025-01-01",
+        end_date="2025-01-01",
+        created_at=datetime.now(),
+    )
+    engine.repo.jobs["LEGACY-JOB"]["status"] = "RUNNING"
+
+    try:
+        engine.resume("LEGACY-JOB")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "Expected ValueError for a legacy job with a bad underlying"
+        )
+
+    # Must not have been silently marked COMPLETED with zero rows.
+    job = engine.repo.get_job("LEGACY-JOB")
+    assert job["status"] == "RUNNING"
+
+
+def test_resume_rejects_a_legacy_job_with_an_inverted_strike_range():
+
+    engine = create_test_engine(SuccessfulDownloadService())
+
+    engine.repo.save_job(
+        job_id="LEGACY-JOB-2",
+        underlying="NIFTY",
+        instrument="OPTIDX",
+        expiry_type="MONTH",
+        option_types="CALL",
+        strike_from=5,
+        strike_to=-5,
+        interval=1,
+        start_date="2025-01-01",
+        end_date="2025-01-01",
+        created_at=datetime.now(),
+    )
+    engine.repo.jobs["LEGACY-JOB-2"]["status"] = "RUNNING"
+
+    try:
+        engine.resume("LEGACY-JOB-2")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "Expected ValueError for a legacy job with strike_from > strike_to"
+        )
+
+    # Must not have been silently marked COMPLETED with zero rows.
+    job = engine.repo.get_job("LEGACY-JOB-2")
+    assert job["status"] == "RUNNING"
 
 
 def test_run_marks_job_failed_when_a_batch_fails():
@@ -458,6 +596,12 @@ def test_resume_raises_for_unknown_job_id():
 if __name__ == "__main__":
 
     test_run_persists_job_and_marks_completed()
+    test_run_downloads_every_strike_in_the_requested_range()
+    test_run_rejects_an_unsupported_underlying_before_persisting()
+    test_run_rejects_an_inverted_strike_range_before_persisting()
+    test_run_rejects_an_out_of_bounds_strike_offset()
+    test_resume_rejects_a_legacy_job_with_a_bad_underlying_instead_of_looping_forever()
+    test_resume_rejects_a_legacy_job_with_an_inverted_strike_range()
     test_run_marks_job_failed_when_a_batch_fails()
     test_run_rejects_reusing_job_id_with_different_dates()
     test_resume_continues_only_the_unfinished_units()
