@@ -4,11 +4,9 @@ api_client.py
 Base Dhan API client.
 """
 
+import os
+
 from app.api.http_client import HTTPClient
-from app.config.config import (
-    DHAN_ACCESS_TOKEN,
-    DHAN_CLIENT_ID,
-)
 from app.config.logging_config import get_logger
 
 logger = get_logger()
@@ -23,9 +21,14 @@ class DhanAPI:
 
         self.http = HTTPClient()
 
+        # Read live from the environment (not app.config.config's
+        # frozen import-time constants) so a token pasted into the
+        # running GUI via POST /api/token takes effect for the next
+        # constructed DhanAPI/RollingOptionAPI - e.g. the next sync
+        # job - without needing to restart the process.
         self.headers = {
-            "access-token": DHAN_ACCESS_TOKEN,
-            "client-id": DHAN_CLIENT_ID,
+            "access-token": os.getenv("DHAN_ACCESS_TOKEN"),
+            "client-id": os.getenv("DHAN_CLIENT_ID"),
             "Content-Type": "application/json",
         }
 

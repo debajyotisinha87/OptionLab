@@ -208,3 +208,21 @@ tr[data-status="FAILED"] .progress-bar-fill {
   padding: 4px 12px;
   font-size: 0.78rem;
 }
+
+#sync-status-line {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+#sync-progress {
+  margin-top: 12px;
+}
+
+#sync-progress small {
+  color: var(--muted);
+}
+
+#token-card h2 {
+  color: var(--danger);
+}

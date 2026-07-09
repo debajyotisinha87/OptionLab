@@ -90,6 +90,20 @@ class CrashingEngine(FakeDownloadEngine):
         raise RuntimeError("simulated crash")
 
 
+class PartiallyFailingEngine(FakeDownloadEngine):
+
+    instances = []
+    fail_job_ids: set = set()
+
+    def run(self, job):
+
+        self.run_calls.append(job)
+
+        if job.job_id in type(self).fail_job_ids:
+
+            raise RuntimeError(f"simulated failure for {job.job_id}")
+
+
 class FakeJob:
 
     def __init__(self, job_id="JOB-1", underlying="NIFTY"):
@@ -300,6 +314,118 @@ def test_a_background_exception_still_clears_current_job_id():
     with_fake_engine(CrashingEngine, run)
 
 
+def test_start_many_is_a_no_op_for_an_empty_list():
+
+    def run():
+
+        runner = JobRunner()
+
+        runner.start_many([])
+
+        assert runner.current_job_id is None
+        assert runner.queue_progress is None
+
+    FakeDownloadEngine.instances = []
+    FakeDownloadEngine.gate = None
+
+    with_fake_engine(FakeDownloadEngine, run)
+
+
+def test_start_many_runs_jobs_sequentially_and_reports_progress():
+
+    class GatedFirstJobEngine(FakeDownloadEngine):
+
+        instances = []
+        gate = threading.Event()
+        gated_job_id = "JOB-1"
+
+        def run(self, job):
+
+            if job.job_id == type(self).gated_job_id:
+
+                type(self).gate.wait(timeout=5)
+
+            self.run_calls.append(job)
+
+    def run():
+
+        runner = JobRunner()
+
+        jobs = [FakeJob(job_id=f"JOB-{i}") for i in range(1, 4)]
+
+        runner.start_many(jobs)
+
+        # JOB-1 is blocked on the gate, so the queue should report
+        # position 1 of 3 while we wait for it.
+        deadline = time.monotonic() + 2
+        while runner.queue_progress is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert runner.queue_progress == {"position": 1, "total": 3}
+        assert runner.current_job_id == "JOB-1"
+
+        GatedFirstJobEngine.gate.set()
+
+        _wait_until_idle(runner)
+
+        assert runner.queue_progress is None
+
+        engine = GatedFirstJobEngine.instances[-1]
+        assert [j.job_id for j in engine.run_calls] == ["JOB-1", "JOB-2", "JOB-3"]
+
+    with_fake_engine(GatedFirstJobEngine, run)
+
+
+def test_start_many_raises_when_a_job_is_already_running():
+
+    class GatedEngine(FakeDownloadEngine):
+
+        instances = []
+        gate = threading.Event()
+
+    def run():
+
+        runner = JobRunner()
+
+        runner.start(FakeJob(job_id="JOB-1"))
+
+        try:
+            runner.start_many([FakeJob(job_id="JOB-2"), FakeJob(job_id="JOB-3")])
+        except JobAlreadyRunningError as exc:
+            assert "JOB-1" in str(exc)
+        else:
+            raise AssertionError("Expected JobAlreadyRunningError")
+        finally:
+            GatedEngine.gate.set()
+
+        _wait_until_idle(runner)
+
+    with_fake_engine(GatedEngine, run)
+
+
+def test_start_many_continues_past_a_failing_job():
+
+    def run():
+
+        runner = JobRunner()
+
+        PartiallyFailingEngine.fail_job_ids = {"JOB-2"}
+
+        jobs = [FakeJob(job_id=f"JOB-{i}") for i in range(1, 4)]
+
+        runner.start_many(jobs)
+
+        _wait_until_idle(runner)
+
+        engine = PartiallyFailingEngine.instances[-1]
+        assert [j.job_id for j in engine.run_calls] == ["JOB-1", "JOB-2", "JOB-3"]
+
+    PartiallyFailingEngine.instances = []
+    PartiallyFailingEngine.fail_job_ids = set()
+
+    with_fake_engine(PartiallyFailingEngine, run)
+
+
 if __name__ == "__main__":
 
     test_start_runs_the_job_and_clears_current_job_id_when_done()
@@ -310,5 +436,9 @@ if __name__ == "__main__":
     test_start_resume_raises_for_unknown_job_id()
     test_start_resume_runs_the_job()
     test_a_background_exception_still_clears_current_job_id()
+    test_start_many_is_a_no_op_for_an_empty_list()
+    test_start_many_runs_jobs_sequentially_and_reports_progress()
+    test_start_many_raises_when_a_job_is_already_running()
+    test_start_many_continues_past_a_failing_job()
 
     print("Job runner tests passed")

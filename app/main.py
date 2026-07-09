@@ -11,6 +11,7 @@ from datetime import datetime
 
 from app import validation
 from app.api.api_client import DhanAPI
+from app.autosync.sync_planner import SyncPlanner
 from app.builders.payload_builder import PayloadBuilder
 from app.config.logging_config import get_logger
 from app.constants.app_info import (
@@ -174,6 +175,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--job-id", required=True, type=_parse_non_blank
     )
 
+    subparsers.add_parser(
+        "sync",
+        help="Catch up NIFTY/SENSEX (WEEK+MONTH, full strike range) to "
+        "today, saving Parquet under app/exports/parquet",
+    )
+
     return parser
 
 
@@ -205,6 +212,23 @@ def run_resume(args: argparse.Namespace):
     DownloadEngine().resume(args.job_id)
 
 
+def run_sync():
+
+    engine = DownloadEngine()
+
+    jobs = SyncPlanner.plan_jobs(engine.repo)
+
+    if not jobs:
+
+        logger.info("NIFTY/SENSEX data is already up to date.")
+
+        return
+
+    for job in jobs:
+
+        engine.run(job)
+
+
 def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
@@ -225,6 +249,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "resume":
 
             run_resume(args)
+
+        elif args.command == "sync":
+
+            run_sync()
 
         else:
 

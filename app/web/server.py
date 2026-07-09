@@ -8,17 +8,22 @@ with:
     python -m app.web
 """
 
+import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
 
+from dotenv import set_key
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 from app import validation
+from app.api.api_client import DhanAPI
+from app.autosync.sync_planner import SyncPlanner
 from app.builders.payload_builder import PayloadBuilder
+from app.config.config import PROJECT_ROOT
 from app.config.logging_config import get_logger
 from app.constants.underlyings import SUPPORTED_UNDERLYINGS
 from app.models.job import DownloadJob
@@ -28,6 +33,8 @@ from app.web.job_runner import JobAlreadyRunningError, JobRunner
 logger = get_logger()
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+ENV_PATH = PROJECT_ROOT / ".env"
 
 
 @asynccontextmanager
@@ -123,6 +130,18 @@ class BrowseFolderRequest(BaseModel):
     initial_dir: str | None = None
 
 
+class UpdateTokenRequest(BaseModel):
+    """POST /api/token request body."""
+
+    access_token: str
+
+    @field_validator("access_token")
+    @classmethod
+    def _validate_access_token(cls, value: str) -> str:
+
+        return validation.non_blank(value)
+
+
 def _json_safe(value: object) -> object:
     """Converts a datetime/date DB value to an ISO string; passes
     everything else through unchanged."""
@@ -212,6 +231,85 @@ def browse_folder(request: BrowseFolderRequest | None = None):
         raise HTTPException(500, f"Could not open folder picker: {exc}")
 
     return {"path": path}
+
+
+@app.get("/api/token-status")
+def token_status():
+    """Checks whether the current DhanHQ access token still works
+    (a real network call - the frontend should only call this on page
+    load and after an update, not on a polling interval)."""
+
+    response = DhanAPI().test_connection()
+
+    return {"valid": response.status_code == 200}
+
+
+@app.post("/api/token")
+def update_token(request: UpdateTokenRequest):
+    """Writes a new access token into .env and applies it to the
+    running process immediately - DhanAPI reads os.environ live (see
+    app/api/api_client.py), so no restart is needed. Never logs the
+    token value."""
+
+    set_key(ENV_PATH, "DHAN_ACCESS_TOKEN", request.access_token, quote_mode="never")
+
+    os.environ["DHAN_ACCESS_TOKEN"] = request.access_token
+
+    response = DhanAPI().test_connection()
+
+    return {"valid": response.status_code == 200}
+
+
+@app.get("/api/sync-status")
+def sync_status(job_runner: JobRunner = Depends(get_job_runner)):
+    """Per-underlying/expiry-type data-freshness status for the
+    auto-sync feature, plus the current sync queue's progress (null
+    if no sync is running)."""
+
+    status = SyncPlanner.status(job_runner.engine.repo)
+
+    queue = job_runner.queue_progress
+
+    if queue is not None:
+
+        current_job_id = job_runner.current_job_id
+        current_job = (
+            job_runner.engine.repo.get_job(current_job_id)
+            if current_job_id
+            else None
+        )
+
+        queue["current_job"] = (
+            _serialize_job(current_job, job_runner) if current_job else None
+        )
+
+    status["queue"] = queue
+
+    return status
+
+
+@app.post("/api/sync", status_code=202)
+def start_sync(job_runner: JobRunner = Depends(get_job_runner)):
+    """Plans and starts the jobs needed to bring NIFTY/SENSEX data up
+    to date (up to 4 jobs - one per underlying/expiry-type combo with
+    a gap). A no-op if everything is already current. 409 if a job or
+    another sync is already running."""
+
+    jobs = SyncPlanner.plan_jobs(job_runner.engine.repo)
+
+    if not jobs:
+
+        return {"job_ids": [], "status": "up_to_date"}
+
+    try:
+
+        job_runner.start_many(jobs)
+
+    except JobAlreadyRunningError as exc:
+
+        raise HTTPException(409, str(exc))
+
+    return {"job_ids": [job.job_id for job in jobs], "status": "started"}
 
 
 @app.get("/api/jobs")

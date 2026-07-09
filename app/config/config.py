@@ -26,7 +26,11 @@ DATABASE_DIR = PROJECT_ROOT / "database"
 # Log Folder
 LOG_DIR = PROJECT_ROOT / "logs"
 
+# Auto-sync Parquet export folder
+EXPORTS_DIR = PROJECT_ROOT / "app" / "exports" / "parquet"
+
 # Create directories automatically
 DATA_DIR.mkdir(exist_ok=True)
 DATABASE_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
+EXPORTS_DIR.mkdir(parents=True, exist_ok=True)

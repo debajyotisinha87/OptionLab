@@ -40,6 +40,8 @@ class JobRunner:
 
         self._lock = threading.Lock()
         self._current_job_id: str | None = None
+        self._queue_job_ids: list[str] = []
+        self._queue_position: int = 0
 
     @property
     def current_job_id(self) -> str | None:
@@ -47,6 +49,23 @@ class JobRunner:
         with self._lock:
 
             return self._current_job_id
+
+    @property
+    def queue_progress(self) -> dict | None:
+        """{"position", "total"} (1-based) while a start_many() queue
+        is running, or None otherwise - used to render "job N of M"
+        during an auto-sync run."""
+
+        with self._lock:
+
+            if not self._queue_job_ids:
+
+                return None
+
+            return {
+                "position": self._queue_position,
+                "total": len(self._queue_job_ids),
+            }
 
     def start(self, job: DownloadJob):
         """Starts a new job in the background. Validates synchronously
@@ -100,6 +119,76 @@ class JobRunner:
             args=(self.engine.resume, job_id),
             daemon=True,
         ).start()
+
+    def start_many(self, jobs: list[DownloadJob]):
+        """Runs a list of jobs sequentially in one background thread,
+        claiming the runner busy for the whole queue's duration (not
+        just the first job) - used by auto-sync to run up to 4 jobs
+        (one per underlying/expiry-type combo) back to back. A job
+        that fails is logged (same as _run()) but does not stop the
+        rest of the queue, matching the existing per-unit failure
+        tolerance inside a single job. A no-op for an empty list."""
+
+        if not jobs:
+
+            return
+
+        for job in jobs:
+
+            DownloadEngine.validate_job(job)
+
+            self.engine.repo.check_job_reusable(
+                job.job_id,
+                job.underlying,
+                job.expiry_type,
+                ",".join(job.option_types),
+                job.strike_from,
+                job.strike_to,
+                job.start_date,
+                job.end_date,
+                job.parquet_output_dir,
+            )
+
+        with self._lock:
+
+            if self._current_job_id is not None:
+
+                raise JobAlreadyRunningError(
+                    f"Job '{self._current_job_id}' is already running"
+                )
+
+            self._queue_job_ids = [job.job_id for job in jobs]
+            self._queue_position = 1
+            self._current_job_id = jobs[0].job_id
+
+        threading.Thread(
+            target=self._run_many,
+            args=(jobs,),
+            daemon=True,
+        ).start()
+
+    def _run_many(self, jobs: list[DownloadJob]):
+
+        for index, job in enumerate(jobs, start=1):
+
+            with self._lock:
+
+                self._current_job_id = job.job_id
+                self._queue_position = index
+
+            try:
+
+                self.engine.run(job)
+
+            except Exception as exc:
+
+                logger.error(f"Background sync job {job.job_id} failed: {exc}")
+
+        with self._lock:
+
+            self._current_job_id = None
+            self._queue_job_ids = []
+            self._queue_position = 0
 
     def _claim(self, job_id: str):
 

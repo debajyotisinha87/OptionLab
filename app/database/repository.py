@@ -58,6 +58,28 @@ class Repository:
 
         self.db.insert_dataframe(df)
 
+    @_synchronized
+    def get_latest_trade_date(self, symbol: str, expiry_flag: str):
+        """Returns the most recent trade_date actually downloaded for a
+        symbol/expiry_flag combination, or None if nothing has ever
+        been downloaded - used by SyncPlanner to compute how far a
+        catch-up sync needs to go, independent of any job's own
+        bookkeeping (a job's nominal end_date isn't reliable here,
+        since a batch can partially fail)."""
+
+        result = self.db.connection.execute(
+            """
+            SELECT MAX(trade_date)
+            FROM option_data
+            WHERE symbol = ? AND expiry_flag = ?
+            """,
+            [symbol, expiry_flag],
+        ).fetchone()
+
+        # MAX() over zero matching rows returns one row shaped (None,),
+        # not zero rows - so `result` itself is never None here.
+        return result[0]
+
     # ------------------------------------------------------------------
     # Generic SQL
     # ------------------------------------------------------------------

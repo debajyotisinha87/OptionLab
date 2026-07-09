@@ -1,3 +1,5 @@
+import os
+
 from fastapi.testclient import TestClient
 
 import app.web.server as server_module
@@ -56,11 +58,14 @@ class FakeJobRunner:
     progress_by_id = {}
     start_error = None
     resume_error = None
+    start_many_error = None
+    queue_progress_value = None
 
     def __init__(self):
 
         self.started = []
         self.resumed = []
+        self.started_many = []
         self._current_job_id = None
 
         self.repo = FakeRepo(type(self).jobs_by_id, type(self).progress_by_id)
@@ -72,6 +77,11 @@ class FakeJobRunner:
     def current_job_id(self):
 
         return self._current_job_id
+
+    @property
+    def queue_progress(self):
+
+        return type(self).queue_progress_value
 
     def start(self, job):
 
@@ -88,6 +98,53 @@ class FakeJobRunner:
             raise type(self).resume_error
 
         self.resumed.append(job_id)
+
+    def start_many(self, jobs):
+
+        if type(self).start_many_error is not None:
+
+            raise type(self).start_many_error
+
+        self.started_many.append(jobs)
+
+
+class FakeJob:
+
+    def __init__(self, job_id):
+
+        self.job_id = job_id
+
+
+class FakeResponse:
+
+    def __init__(self, status_code):
+
+        self.status_code = status_code
+
+
+class FakeDhanAPI:
+
+    status_code = 200
+
+    def test_connection(self):
+
+        return FakeResponse(type(self).status_code)
+
+
+class FakeSyncPlanner:
+
+    status_result = {"combos": [], "up_to_date": True}
+    plan_jobs_result = []
+
+    @staticmethod
+    def status(repo):
+
+        return dict(FakeSyncPlanner.status_result)
+
+    @staticmethod
+    def plan_jobs(repo):
+
+        return list(FakeSyncPlanner.plan_jobs_result)
 
 
 def sample_job(job_id="JOB-1", status="RUNNING", completed_batches=3, failed_batches=0):
@@ -521,6 +578,258 @@ def test_list_jobs_reports_live_progress_not_the_frozen_job_row():
     with_fake_job_runner(Runner, run)
 
 
+def test_token_status_reports_valid_when_connection_succeeds():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        original = server_module.DhanAPI
+        server_module.DhanAPI = FakeDhanAPI
+        FakeDhanAPI.status_code = 200
+
+        try:
+            response = client.get("/api/token-status")
+        finally:
+            server_module.DhanAPI = original
+
+        assert response.status_code == 200
+        assert response.json() == {"valid": True}
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_token_status_reports_invalid_when_connection_fails():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        original = server_module.DhanAPI
+        server_module.DhanAPI = FakeDhanAPI
+        FakeDhanAPI.status_code = 401
+
+        try:
+            response = client.get("/api/token-status")
+        finally:
+            server_module.DhanAPI = original
+
+        assert response.json() == {"valid": False}
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_update_token_writes_env_and_updates_process_env():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        set_key_calls = []
+
+        def fake_set_key(path, key, value, quote_mode=None):
+            set_key_calls.append((path, key, value, quote_mode))
+
+        original_set_key = server_module.set_key
+        original_dhan_api = server_module.DhanAPI
+        server_module.set_key = fake_set_key
+        server_module.DhanAPI = FakeDhanAPI
+        FakeDhanAPI.status_code = 200
+
+        original_env = os.environ.get("DHAN_ACCESS_TOKEN")
+
+        try:
+            response = client.post(
+                "/api/token", json={"access_token": "NEW-TOKEN-VALUE"}
+            )
+        finally:
+            server_module.set_key = original_set_key
+            server_module.DhanAPI = original_dhan_api
+            if original_env is not None:
+                os.environ["DHAN_ACCESS_TOKEN"] = original_env
+            else:
+                os.environ.pop("DHAN_ACCESS_TOKEN", None)
+
+        assert response.status_code == 200
+        assert response.json() == {"valid": True}
+
+        assert len(set_key_calls) == 1
+        _, key, value, quote_mode = set_key_calls[0]
+        assert key == "DHAN_ACCESS_TOKEN"
+        assert value == "NEW-TOKEN-VALUE"
+        assert quote_mode == "never"
+
+        # The token value must never be echoed back in the response.
+        assert "NEW-TOKEN-VALUE" not in response.text
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_update_token_rejects_a_blank_value():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        response = client.post("/api/token", json={"access_token": "   "})
+
+        assert response.status_code == 422
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_sync_status_reports_planner_status_when_no_queue_active():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        original = server_module.SyncPlanner
+        server_module.SyncPlanner = FakeSyncPlanner
+        FakeSyncPlanner.status_result = {
+            "combos": [
+                {
+                    "underlying": "NIFTY",
+                    "expiry_type": "WEEK",
+                    "latest_date": None,
+                    "up_to_date": False,
+                }
+            ],
+            "up_to_date": False,
+        }
+
+        try:
+            response = client.get("/api/sync-status")
+        finally:
+            server_module.SyncPlanner = original
+
+        assert response.status_code == 200
+
+        body = response.json()
+        assert body["up_to_date"] is False
+        assert body["queue"] is None
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_sync_status_includes_queue_progress_and_current_job_when_syncing():
+
+    job_id = "NIFTY-SYNC-WEEK-2020-01-01-2025-01-01"
+
+    class Runner(FakeJobRunner):
+        instances = []
+        jobs_by_id = {job_id: sample_job(job_id=job_id, status="RUNNING")}
+        queue_progress_value = {"position": 2, "total": 4}
+
+        def __init__(self):
+            super().__init__()
+            self._current_job_id = job_id
+
+    def run(client):
+
+        original = server_module.SyncPlanner
+        server_module.SyncPlanner = FakeSyncPlanner
+        FakeSyncPlanner.status_result = {"combos": [], "up_to_date": False}
+
+        try:
+            response = client.get("/api/sync-status")
+        finally:
+            server_module.SyncPlanner = original
+
+        assert response.status_code == 200
+
+        body = response.json()
+        assert body["queue"]["position"] == 2
+        assert body["queue"]["total"] == 4
+        assert body["queue"]["current_job"]["job_id"] == job_id
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_start_sync_returns_up_to_date_when_nothing_to_sync():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        original = server_module.SyncPlanner
+        server_module.SyncPlanner = FakeSyncPlanner
+        FakeSyncPlanner.plan_jobs_result = []
+
+        try:
+            response = client.post("/api/sync")
+        finally:
+            server_module.SyncPlanner = original
+
+        assert response.status_code == 202
+        assert response.json() == {"job_ids": [], "status": "up_to_date"}
+
+        runner = Runner.instances[-1]
+        assert runner.started_many == []
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_start_sync_dispatches_planned_jobs_to_start_many():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        job = FakeJob(job_id="NIFTY-SYNC-WEEK-2020-01-01-2025-01-01")
+
+        original = server_module.SyncPlanner
+        server_module.SyncPlanner = FakeSyncPlanner
+        FakeSyncPlanner.plan_jobs_result = [job]
+
+        try:
+            response = client.post("/api/sync")
+        finally:
+            server_module.SyncPlanner = original
+
+        assert response.status_code == 202
+
+        body = response.json()
+        assert body["status"] == "started"
+        assert body["job_ids"] == [job.job_id]
+
+        runner = Runner.instances[-1]
+        assert runner.started_many == [[job]]
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_start_sync_returns_409_when_a_job_is_already_running():
+
+    class Runner(FakeJobRunner):
+        instances = []
+        start_many_error = server_module.JobAlreadyRunningError(
+            "Job 'X' is already running"
+        )
+
+    def run(client):
+
+        original = server_module.SyncPlanner
+        server_module.SyncPlanner = FakeSyncPlanner
+        FakeSyncPlanner.plan_jobs_result = [FakeJob(job_id="JOB-X")]
+
+        try:
+            response = client.post("/api/sync")
+        finally:
+            server_module.SyncPlanner = original
+
+        assert response.status_code == 409
+
+    with_fake_job_runner(Runner, run)
+
+
 def test_lifespan_logs_and_reraises_when_job_runner_construction_fails():
 
     class RaisingJobRunner:
@@ -568,6 +877,15 @@ if __name__ == "__main__":
     test_browse_folder_returns_null_path_when_cancelled()
     test_browse_folder_returns_500_when_the_dialog_fails()
     test_list_jobs_reports_live_progress_not_the_frozen_job_row()
+    test_token_status_reports_valid_when_connection_succeeds()
+    test_token_status_reports_invalid_when_connection_fails()
+    test_update_token_writes_env_and_updates_process_env()
+    test_update_token_rejects_a_blank_value()
+    test_sync_status_reports_planner_status_when_no_queue_active()
+    test_sync_status_includes_queue_progress_and_current_job_when_syncing()
+    test_start_sync_returns_up_to_date_when_nothing_to_sync()
+    test_start_sync_dispatches_planned_jobs_to_start_many()
+    test_start_sync_returns_409_when_a_job_is_already_running()
     test_lifespan_logs_and_reraises_when_job_runner_construction_fails()
 
     print("Web server tests passed")

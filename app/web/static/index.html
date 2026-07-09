@@ -14,6 +14,34 @@
 
 <main>
 
+  <section class="card" id="token-card" hidden>
+    <h2>DhanHQ Token Expired</h2>
+    <p class="hint">Generate a new access token from your DhanHQ account and paste it below.</p>
+    <div class="field-row">
+      <label>
+        Access Token
+        <input type="password" id="f-token" placeholder="paste new access token">
+      </label>
+    </div>
+    <button type="button" id="token-update-btn">Update Token</button>
+    <span id="token-message" class="message"></span>
+  </section>
+
+  <section class="card">
+    <h2>Data Sync</h2>
+    <p class="hint">Keeps NIFTY and SENSEX (WEEK + MONTH, full strike range) up to date automatically in <code>app/exports/parquet</code>.</p>
+    <div id="sync-status-line">
+      <span id="sync-status-pill" class="status-pill">Checking&hellip;</span>
+      <button type="button" id="sync-btn" disabled>Sync Data</button>
+    </div>
+    <div id="sync-progress" hidden>
+      <div class="progress-bar">
+        <div class="progress-bar-fill" id="sync-progress-fill" style="width:0%"></div>
+      </div>
+      <small id="sync-progress-label"></small>
+    </div>
+  </section>
+
   <section class="card">
     <h2>New Download</h2>
     <form id="job-form">

@@ -478,6 +478,8 @@ Preserve the existing architecture.
 
 ✓ End-to-End Testing (TASK-024)
 
+✓ Auto-Sync (NIFTY/SENSEX) and Token Health Check (TASK-023.7)
+
 ---
 
 # Current Task
