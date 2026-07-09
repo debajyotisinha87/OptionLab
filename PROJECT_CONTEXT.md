@@ -474,17 +474,13 @@ Preserve the existing architecture.
 
 ✓ Multi-Underlying and Strike-Range Support (TASK-023.5)
 
+✓ Web GUI (TASK-023.6)
+
+✓ End-to-End Testing (TASK-024)
+
 ---
 
 # Current Task
-
-TASK-024
-
-End-to-End Testing
-
-Complete download workflow.
-
----
 
 TASK-025
 
