@@ -472,6 +472,8 @@ Preserve the existing architecture.
 
 ✓ CLI (TASK-023)
 
+✓ Multi-Underlying and Strike-Range Support (TASK-023.5)
+
 ---
 
 # Current Task
