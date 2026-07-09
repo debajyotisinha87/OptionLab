@@ -9,6 +9,7 @@ import argparse
 import sys
 from datetime import datetime
 
+from app import validation
 from app.api.api_client import DhanAPI
 from app.builders.payload_builder import PayloadBuilder
 from app.config.logging_config import get_logger
@@ -22,7 +23,7 @@ from app.models.job import DownloadJob
 
 logger = get_logger()
 
-DATE_FORMAT = "%Y-%m-%d"
+DATE_FORMAT = validation.DATE_FORMAT
 
 
 def banner():
@@ -48,35 +49,30 @@ def _parse_date(value: str) -> str:
 
     try:
 
-        datetime.strptime(value, DATE_FORMAT)
+        return validation.parse_date(value)
 
-    except ValueError:
+    except ValueError as exc:
 
-        raise argparse.ArgumentTypeError(
-            f"Invalid date '{_sanitize_for_stderr(value)}': "
-            f"expected {DATE_FORMAT}"
-        )
-
-    return value
+        raise argparse.ArgumentTypeError(_sanitize_for_stderr(str(exc)))
 
 
 def _parse_non_blank(value: str) -> str:
 
-    stripped = value.strip()
+    try:
 
-    if not stripped:
+        return validation.non_blank(value)
 
-        raise argparse.ArgumentTypeError("value must not be blank")
+    except ValueError as exc:
 
-    return stripped
+        raise argparse.ArgumentTypeError(str(exc))
 
 
-# Per DhanHQ's /v2/charts/rollingoption docs: expiryFlag accepts only
-# WEEK/MONTH, drvOptionType accepts only CALL/PUT. Strike-offset bounds
-# live on PayloadBuilder, the single source of truth for DhanHQ's
-# ATM-10..ATM+10 range for index options.
-VALID_EXPIRY_TYPES = ("WEEK", "MONTH")
-VALID_OPTION_TYPES = ("CALL", "PUT")
+# expiryFlag/drvOptionType/strike-offset valid values all live on
+# PayloadBuilder, the single source of truth for DhanHQ's payload
+# contract, so both the CLI and the web GUI validate against the same
+# constants without one importing from the other.
+VALID_EXPIRY_TYPES = PayloadBuilder.VALID_EXPIRY_TYPES
+VALID_OPTION_TYPES = PayloadBuilder.VALID_OPTION_TYPES
 
 
 def _make_choice_parser(valid_choices):
@@ -85,16 +81,13 @@ def _make_choice_parser(valid_choices):
 
     def _parse(value: str) -> str:
 
-        normalized = value.strip().upper()
+        try:
 
-        if normalized not in valid_choices:
+            return validation.normalize_choice(value, valid_choices)
 
-            raise argparse.ArgumentTypeError(
-                f"invalid choice: '{_sanitize_for_stderr(value)}' "
-                f"(choose from {', '.join(sorted(valid_choices))})"
-            )
+        except ValueError as exc:
 
-        return normalized
+            raise argparse.ArgumentTypeError(_sanitize_for_stderr(str(exc)))
 
     return _parse
 
@@ -133,34 +126,15 @@ def _parse_strike_offset(value: str) -> int:
 
 def _parse_option_types(value: str) -> list[str]:
 
-    option_types = [
-        option_type.strip().upper()
-        for option_type in value.split(",")
-        if option_type.strip()
-    ]
+    try:
 
-    if not option_types:
-
-        raise argparse.ArgumentTypeError(
-            "--option-types must contain at least one value, e.g. CALL,PUT"
+        return validation.normalize_choices(
+            value.split(","), VALID_OPTION_TYPES, label="option type"
         )
 
-    invalid = [
-        option_type
-        for option_type in option_types
-        if option_type not in VALID_OPTION_TYPES
-    ]
+    except ValueError as exc:
 
-    if invalid:
-
-        safe_invalid = [_sanitize_for_stderr(item) for item in invalid]
-
-        raise argparse.ArgumentTypeError(
-            f"invalid option type(s): {', '.join(safe_invalid)} "
-            f"(choose from {', '.join(VALID_OPTION_TYPES)})"
-        )
-
-    return option_types
+        raise argparse.ArgumentTypeError(_sanitize_for_stderr(str(exc)))
 
 
 def build_parser() -> argparse.ArgumentParser:

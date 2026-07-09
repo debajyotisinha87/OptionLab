@@ -4,11 +4,38 @@ Repository Layer
 All database access goes through this class.
 """
 
+import functools
 from pathlib import Path
 
 import pandas as pd
 
 from app.database.duckdb_manager import DuckDBManager
+
+
+def _synchronized(method):
+    """DuckDB supports only one connection to a database file per
+    process (see DuckDBManager's docstring), so a Repository instance
+    shared between a background download job and concurrent readers
+    (e.g. a web server's request-handler threads) must serialize every
+    call that touches the connection. self.db.lock is an RLock so a
+    method that calls another synchronized method on the same instance
+    (e.g. save_job() -> get_job()) doesn't deadlock itself."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+
+        with self.db.lock:
+
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+def _row_to_dict(cursor, row) -> dict:
+
+    columns = [column[0] for column in cursor.description]
+
+    return dict(zip(columns, row))
 
 
 class Repository:
@@ -21,10 +48,12 @@ class Repository:
     # Option Data
     # ------------------------------------------------------------------
 
+    @_synchronized
     def create_option_data_table(self):
 
         self.execute_sql_file("option_data.sql")
 
+    @_synchronized
     def insert_option_data(self, df: pd.DataFrame):
 
         self.db.insert_dataframe(df)
@@ -33,14 +62,21 @@ class Repository:
     # Generic SQL
     # ------------------------------------------------------------------
 
+    @_synchronized
     def execute(self, sql: str):
+        """Fire-and-forget DDL/statement execution - deliberately does
+        not return the cursor. A caller fetching from it outside this
+        method would read the shared connection without holding
+        db.lock, racing any other thread's concurrent use of it."""
 
-        return self.db.connection.execute(sql)
+        self.db.connection.execute(sql)
 
+    @_synchronized
     def query(self, sql: str):
 
         return self.db.connection.execute(sql).fetchdf()
 
+    @_synchronized
     def execute_sql_file(self, filename: str):
 
         sql_path = Path("app/database/schema") / filename
@@ -53,10 +89,12 @@ class Repository:
     # Download Manifest
     # ------------------------------------------------------------------
 
+    @_synchronized
     def create_download_manifest_table(self):
 
         self.execute_sql_file("download_manifest.sql")
 
+    @_synchronized
     def create_manifest_entry(
         self,
         job_id: str,
@@ -120,6 +158,7 @@ class Repository:
             ],
         )
 
+    @_synchronized
     def get_manifest_status(
         self,
         job_id: str,
@@ -158,6 +197,7 @@ class Repository:
 
         return result[0]
 
+    @_synchronized
     def get_manifest_retry_count(
         self,
         job_id: str,
@@ -196,6 +236,7 @@ class Repository:
 
         return result[0]
 
+    @_synchronized
     def reconcile_stale_running_batches(self, job_id: str) -> bool:
         """
         A manifest row left at RUNNING means a previous attempt was
@@ -242,6 +283,7 @@ class Repository:
 
         return True
 
+    @_synchronized
     def mark_batch_started(
         self,
         job_id: str,
@@ -276,6 +318,7 @@ class Repository:
             ],
         )
 
+    @_synchronized
     def mark_batch_completed(
         self,
         job_id: str,
@@ -314,6 +357,7 @@ class Repository:
             ],
         )
 
+    @_synchronized
     def mark_batch_failed(
         self,
         job_id: str,
@@ -348,6 +392,7 @@ class Repository:
             ],
         )
 
+    @_synchronized
     def get_job_progress(self, job_id: str) -> dict:
 
         result = self.db.connection.execute(
@@ -374,10 +419,54 @@ class Repository:
     # Download Jobs
     # ------------------------------------------------------------------
 
+    @_synchronized
     def create_download_jobs_table(self):
 
         self.execute_sql_file("download_jobs.sql")
 
+    @_synchronized
+    def check_job_reusable(
+        self,
+        job_id: str,
+        underlying: str,
+        expiry_type: str,
+        option_types: str,
+        strike_from: int,
+        strike_to: int,
+        start_date: str,
+        end_date: str,
+    ) -> None:
+        """Raises ValueError if job_id already exists with different
+        parameters than given; a no-op if job_id is new or matches the
+        existing row exactly. save_job() calls this right before its
+        INSERT; callers that background save_job() (e.g. JobRunner)
+        should also call this synchronously first, so a mismatched
+        job_id reuse is rejected immediately instead of only failing
+        deep inside the background thread."""
+
+        existing = self.get_job(job_id)
+
+        if existing is None:
+
+            return
+
+        if (
+            existing["underlying"] != underlying
+            or existing["expiry_type"] != expiry_type
+            or existing["option_types"] != option_types
+            or existing["strike_from"] != strike_from
+            or existing["strike_to"] != strike_to
+            or str(existing["start_date"]) != start_date
+            or str(existing["end_date"]) != end_date
+        ):
+
+            raise ValueError(
+                f"job_id '{job_id}' already exists with different "
+                "parameters. Use a new job_id, or call resume(job_id) "
+                "to continue the existing job."
+            )
+
+    @_synchronized
     def save_job(
         self,
         job_id: str,
@@ -393,25 +482,18 @@ class Repository:
         created_at,
     ):
 
-        existing = self.get_job(job_id)
+        self.check_job_reusable(
+            job_id,
+            underlying,
+            expiry_type,
+            option_types,
+            strike_from,
+            strike_to,
+            start_date,
+            end_date,
+        )
 
-        if existing is not None:
-
-            if (
-                existing["underlying"] != underlying
-                or existing["expiry_type"] != expiry_type
-                or existing["option_types"] != option_types
-                or existing["strike_from"] != strike_from
-                or existing["strike_to"] != strike_to
-                or str(existing["start_date"]) != start_date
-                or str(existing["end_date"]) != end_date
-            ):
-
-                raise ValueError(
-                    f"job_id '{job_id}' already exists with different "
-                    "parameters. Use a new job_id, or call resume(job_id) "
-                    "to continue the existing job."
-                )
+        if self.get_job(job_id) is not None:
 
             return
 
@@ -448,6 +530,7 @@ class Repository:
             ],
         )
 
+    @_synchronized
     def get_job(self, job_id: str) -> dict | None:
 
         cursor = self.db.connection.execute(
@@ -466,10 +549,22 @@ class Repository:
 
             return None
 
-        columns = [column[0] for column in cursor.description]
+        return _row_to_dict(cursor, row)
 
-        return dict(zip(columns, row))
+    @_synchronized
+    def list_jobs(self) -> list[dict]:
 
+        cursor = self.db.connection.execute(
+            """
+            SELECT *
+            FROM download_jobs
+            ORDER BY created_at DESC
+            """
+        )
+
+        return [_row_to_dict(cursor, row) for row in cursor.fetchall()]
+
+    @_synchronized
     def mark_job_started(self, job_id: str):
 
         self.db.connection.execute(
@@ -484,6 +579,7 @@ class Repository:
             [job_id],
         )
 
+    @_synchronized
     def set_job_total_batches(self, job_id: str, total_batches: int):
 
         self.db.connection.execute(
@@ -497,6 +593,7 @@ class Repository:
             [total_batches, job_id],
         )
 
+    @_synchronized
     def mark_job_completed(
         self,
         job_id: str,
@@ -520,6 +617,7 @@ class Repository:
             [completed_batches, failed_batches, total_rows, job_id],
         )
 
+    @_synchronized
     def mark_job_failed(
         self,
         job_id: str,

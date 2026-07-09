@@ -1,0 +1,475 @@
+from fastapi.testclient import TestClient
+
+import app.web.server as server_module
+
+
+class FakeRepo:
+    """By default get_job_progress() mirrors the job row's own
+    completed_batches/failed_batches/total_rows, matching a terminal
+    job where the two agree. Tests that need to prove progress is read
+    live (not from the frozen row) override progress_by_id."""
+
+    def __init__(self, jobs_by_id, progress_by_id=None):
+
+        self._jobs_by_id = jobs_by_id
+        self._progress_by_id = progress_by_id or {}
+
+    def list_jobs(self):
+
+        return list(self._jobs_by_id.values())
+
+    def get_job(self, job_id):
+
+        return self._jobs_by_id.get(job_id)
+
+    def get_job_progress(self, job_id):
+
+        if job_id in self._progress_by_id:
+
+            return self._progress_by_id[job_id]
+
+        job = self._jobs_by_id.get(job_id, {})
+
+        return {
+            "completed_batches": job.get("completed_batches", 0),
+            "failed_batches": job.get("failed_batches", 0),
+            "total_rows": job.get("total_rows", 0),
+        }
+
+
+class FakeEngine:
+
+    def __init__(self, repo):
+
+        self.repo = repo
+
+
+class FakeJobRunner:
+    """Zero-arg constructible (app/web/server.py's lifespan calls
+    JobRunner() directly), configured per test via class attributes on
+    a small subclass - same pattern used for FakeDownloadEngine in
+    app/tests/test_job_runner.py and test_cli.py."""
+
+    instances = []
+    jobs_by_id = {}
+    progress_by_id = {}
+    start_error = None
+    resume_error = None
+
+    def __init__(self):
+
+        self.started = []
+        self.resumed = []
+        self._current_job_id = None
+
+        self.repo = FakeRepo(type(self).jobs_by_id, type(self).progress_by_id)
+        self.engine = FakeEngine(self.repo)
+
+        type(self).instances.append(self)
+
+    @property
+    def current_job_id(self):
+
+        return self._current_job_id
+
+    def start(self, job):
+
+        if type(self).start_error is not None:
+
+            raise type(self).start_error
+
+        self.started.append(job)
+
+    def start_resume(self, job_id):
+
+        if type(self).resume_error is not None:
+
+            raise type(self).resume_error
+
+        self.resumed.append(job_id)
+
+
+def sample_job(job_id="JOB-1", status="RUNNING", completed_batches=3, failed_batches=0):
+
+    return {
+        "job_id": job_id,
+        "underlying": "NIFTY",
+        "expiry_type": "MONTH",
+        "option_types": "CALL,PUT",
+        "strike_from": -1,
+        "strike_to": 1,
+        "start_date": "2025-01-01",
+        "end_date": "2025-01-31",
+        "status": status,
+        "total_batches": 6,
+        "completed_batches": completed_batches,
+        "failed_batches": failed_batches,
+        "total_rows": 1500,
+        "created_at": None,
+        "started_at": None,
+        "completed_at": None,
+    }
+
+
+VALID_PAYLOAD = {
+    "underlying": "NIFTY",
+    "expiry_type": "MONTH",
+    "option_types": ["CALL"],
+    "strike_from": 0,
+    "strike_to": 0,
+    "start_date": "2025-01-01",
+    "end_date": "2025-01-01",
+}
+
+
+def with_fake_job_runner(runner_class, fn):
+    """Patches the JobRunner CLASS referenced by app/web/server.py's
+    lifespan (not just the get_job_runner dependency), so entering the
+    TestClient context (which runs the real lifespan startup event)
+    never touches the real DownloadEngine/DuckDB connection."""
+
+    original = server_module.JobRunner
+    server_module.JobRunner = runner_class
+
+    try:
+
+        with TestClient(server_module.app) as client:
+
+            return fn(client)
+
+    finally:
+
+        server_module.JobRunner = original
+
+
+def test_list_underlyings_returns_the_supported_set():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        response = client.get("/api/underlyings")
+
+        assert response.status_code == 200
+        assert "NIFTY" in response.json()
+        assert "BANKNIFTY" in response.json()
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_list_jobs_returns_serialized_jobs():
+
+    class Runner(FakeJobRunner):
+        instances = []
+        jobs_by_id = {"JOB-1": sample_job()}
+
+    def run(client):
+
+        response = client.get("/api/jobs")
+
+        assert response.status_code == 200
+
+        jobs = response.json()
+        assert len(jobs) == 1
+        assert jobs[0]["job_id"] == "JOB-1"
+        assert jobs[0]["percent_complete"] == 50.0
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_get_job_returns_404_for_unknown_job():
+
+    class Runner(FakeJobRunner):
+        instances = []
+        jobs_by_id = {}
+
+    def run(client):
+
+        response = client.get("/api/jobs/DOES-NOT-EXIST")
+
+        assert response.status_code == 404
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_get_job_marks_is_running_for_the_active_job():
+
+    class Runner(FakeJobRunner):
+        instances = []
+        jobs_by_id = {"JOB-1": sample_job(status="RUNNING")}
+
+        def __init__(self):
+            super().__init__()
+            self._current_job_id = "JOB-1"
+
+    def run(client):
+
+        response = client.get("/api/jobs/JOB-1")
+
+        assert response.status_code == 200
+        assert response.json()["is_running"] is True
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_create_job_dispatches_to_job_runner_start():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        response = client.post("/api/jobs", json=VALID_PAYLOAD)
+
+        assert response.status_code == 202
+        assert response.json()["job_id"] == "NIFTY-2025-01-01-2025-01-01"
+
+        runner = Runner.instances[-1]
+        assert len(runner.started) == 1
+        assert runner.started[0].underlying == "NIFTY"
+        assert runner.started[0].option_types == ["CALL"]
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_create_job_uses_the_explicit_job_id_when_given():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        payload = dict(VALID_PAYLOAD, job_id="MY-JOB")
+
+        response = client.post("/api/jobs", json=payload)
+
+        assert response.status_code == 202
+        assert response.json()["job_id"] == "MY-JOB"
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_create_job_rejects_an_unsupported_underlying():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        payload = dict(VALID_PAYLOAD, underlying="RELIANCE")
+
+        response = client.post("/api/jobs", json=payload)
+
+        assert response.status_code == 422
+        assert Runner.instances == [] or Runner.instances[-1].started == []
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_create_job_rejects_an_invalid_date():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        payload = dict(VALID_PAYLOAD, start_date="not-a-date")
+
+        response = client.post("/api/jobs", json=payload)
+
+        assert response.status_code == 422
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_create_job_rejects_empty_option_types():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        payload = dict(VALID_PAYLOAD, option_types=[])
+
+        response = client.post("/api/jobs", json=payload)
+
+        assert response.status_code == 422
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_create_job_returns_409_when_a_job_is_already_running():
+
+    class Runner(FakeJobRunner):
+        instances = []
+        start_error = server_module.JobAlreadyRunningError("Job 'X' is already running")
+
+    def run(client):
+
+        response = client.post("/api/jobs", json=VALID_PAYLOAD)
+
+        assert response.status_code == 409
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_create_job_returns_400_for_a_value_error_from_start():
+
+    class Runner(FakeJobRunner):
+        instances = []
+        start_error = ValueError("strike_from must be <= strike_to")
+
+    def run(client):
+
+        response = client.post("/api/jobs", json=VALID_PAYLOAD)
+
+        assert response.status_code == 400
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_resume_job_dispatches_to_job_runner_start_resume():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        response = client.post("/api/jobs/JOB-1/resume")
+
+        assert response.status_code == 202
+
+        runner = Runner.instances[-1]
+        assert runner.resumed == ["JOB-1"]
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_resume_job_returns_404_for_unknown_job_id():
+
+    class Runner(FakeJobRunner):
+        instances = []
+        resume_error = ValueError("Unknown job_id: JOB-1")
+
+    def run(client):
+
+        response = client.post("/api/jobs/JOB-1/resume")
+
+        assert response.status_code == 404
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_resume_job_returns_409_when_a_job_is_already_running():
+
+    class Runner(FakeJobRunner):
+        instances = []
+        resume_error = server_module.JobAlreadyRunningError("Job 'X' is already running")
+
+    def run(client):
+
+        response = client.post("/api/jobs/JOB-1/resume")
+
+        assert response.status_code == 409
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_index_serves_the_frontend():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        response = client.get("/")
+
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_list_jobs_reports_live_progress_not_the_frozen_job_row():
+    """completed_batches/failed_batches on the job row are only
+    written once, when a job finishes - list_jobs()/get_job() must
+    report get_job_progress()'s live manifest aggregate instead, or a
+    RUNNING job's progress bar would stay frozen for its whole run."""
+
+    class Runner(FakeJobRunner):
+        instances = []
+        jobs_by_id = {
+            "JOB-1": sample_job(
+                status="RUNNING", completed_batches=0, failed_batches=0
+            )
+        }
+        progress_by_id = {
+            "JOB-1": {
+                "completed_batches": 4,
+                "failed_batches": 1,
+                "total_rows": 999,
+            }
+        }
+
+    def run(client):
+
+        response = client.get("/api/jobs/JOB-1")
+
+        assert response.status_code == 200
+
+        body = response.json()
+        assert body["completed_batches"] == 4
+        assert body["failed_batches"] == 1
+        assert body["total_rows"] == 999
+        assert body["percent_complete"] == round(100 * 5 / 6, 1)
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_lifespan_logs_and_reraises_when_job_runner_construction_fails():
+
+    class RaisingJobRunner:
+
+        def __init__(self):
+
+            raise RuntimeError("simulated DuckDB connection failure")
+
+    original = server_module.JobRunner
+    server_module.JobRunner = RaisingJobRunner
+
+    try:
+
+        try:
+            with TestClient(server_module.app):
+                pass
+        except RuntimeError as exc:
+            assert "simulated DuckDB connection failure" in str(exc)
+        else:
+            raise AssertionError("Expected RuntimeError from lifespan startup")
+
+    finally:
+        server_module.JobRunner = original
+
+
+if __name__ == "__main__":
+
+    test_list_underlyings_returns_the_supported_set()
+    test_list_jobs_returns_serialized_jobs()
+    test_get_job_returns_404_for_unknown_job()
+    test_get_job_marks_is_running_for_the_active_job()
+    test_create_job_dispatches_to_job_runner_start()
+    test_create_job_uses_the_explicit_job_id_when_given()
+    test_create_job_rejects_an_unsupported_underlying()
+    test_create_job_rejects_an_invalid_date()
+    test_create_job_rejects_empty_option_types()
+    test_create_job_returns_409_when_a_job_is_already_running()
+    test_create_job_returns_400_for_a_value_error_from_start()
+    test_resume_job_dispatches_to_job_runner_start_resume()
+    test_resume_job_returns_404_for_unknown_job_id()
+    test_resume_job_returns_409_when_a_job_is_already_running()
+    test_index_serves_the_frontend()
+    test_list_jobs_reports_live_progress_not_the_frozen_job_row()
+    test_lifespan_logs_and_reraises_when_job_runner_construction_fails()
+
+    print("Web server tests passed")

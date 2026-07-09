@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OptionLab</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>OptionLab</h1>
+  <p class="subtitle">Historical options data downloader</p>
+</header>
+
+<main>
+
+  <section class="card">
+    <h2>New Download</h2>
+    <form id="job-form">
+      <div class="field-row">
+        <label>
+          Underlying
+          <select id="f-underlying" required></select>
+        </label>
+        <label>
+          Expiry Type
+          <select id="f-expiry-type" required>
+            <option value="MONTH">MONTH</option>
+            <option value="WEEK">WEEK</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label class="checkbox-label"><input type="checkbox" name="option-type" value="CALL" checked> CALL</label>
+        <label class="checkbox-label"><input type="checkbox" name="option-type" value="PUT" checked> PUT</label>
+      </div>
+
+      <div class="field-row">
+        <label>
+          Strike From
+          <input type="number" id="f-strike-from" value="0" min="-10" max="10" required>
+        </label>
+        <label>
+          Strike To
+          <input type="number" id="f-strike-to" value="0" min="-10" max="10" required>
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label>
+          Start Date
+          <input type="date" id="f-start-date" required>
+        </label>
+        <label>
+          End Date
+          <input type="date" id="f-end-date" required>
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label>
+          Job ID <span class="hint">(optional)</span>
+          <input type="text" id="f-job-id" placeholder="auto-generated if left blank">
+        </label>
+      </div>
+
+      <button type="submit">Start Download</button>
+      <span id="form-message" class="message"></span>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Jobs</h2>
+    <table id="jobs-table">
+      <thead>
+        <tr>
+          <th>Job ID</th>
+          <th>Underlying</th>
+          <th>Status</th>
+          <th>Progress</th>
+          <th>Rows</th>
+          <th>Dates</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="jobs-body">
+        <tr><td colspan="7" class="empty">No jobs yet.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

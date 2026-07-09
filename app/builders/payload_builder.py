@@ -18,6 +18,15 @@ class PayloadBuilder:
 
     MAX_STRIKE_OFFSET = 10
 
+    # Per DhanHQ's /v2/charts/rollingoption docs: expiryFlag accepts
+    # only WEEK/MONTH, drvOptionType accepts only CALL/PUT. Defined
+    # here (not in app/main.py) so both the CLI and the web GUI can
+    # validate against the same source of truth without one importing
+    # from the other.
+    VALID_EXPIRY_TYPES = ("WEEK", "MONTH")
+
+    VALID_OPTION_TYPES = ("CALL", "PUT")
+
     @staticmethod
     def build(
         job: DownloadJob,
