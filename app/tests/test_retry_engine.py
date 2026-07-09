@@ -180,7 +180,7 @@ class CrashingDownloadService:
         self.crash_times = crash_times
         self.call_count = 0
 
-    def download(self, payload):
+    def download(self, payload, parquet_output_dir=None):
 
         self.call_count += 1
 

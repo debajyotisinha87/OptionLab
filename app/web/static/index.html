@@ -35,17 +35,7 @@
         <label class="checkbox-label"><input type="checkbox" name="option-type" value="CALL" checked> CALL</label>
         <label class="checkbox-label"><input type="checkbox" name="option-type" value="PUT" checked> PUT</label>
       </div>
-
-      <div class="field-row">
-        <label>
-          Strike From
-          <input type="number" id="f-strike-from" value="0" min="-10" max="10" required>
-        </label>
-        <label>
-          Strike To
-          <input type="number" id="f-strike-to" value="0" min="-10" max="10" required>
-        </label>
-      </div>
+      <p class="hint">Downloads the full ATM&minus;10 to ATM+10 strike range every time (DhanHQ's supported range for index options) &mdash; not configurable.</p>
 
       <div class="field-row">
         <label>
@@ -62,6 +52,16 @@
         <label>
           Job ID <span class="hint">(optional)</span>
           <input type="text" id="f-job-id" placeholder="auto-generated if left blank">
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label>
+          Save Parquet to <span class="hint">(optional)</span>
+          <span class="input-with-button">
+            <input type="text" id="f-parquet-dir" placeholder="not saved to Parquet if left blank">
+            <button type="button" id="f-parquet-browse">Browse&hellip;</button>
+          </span>
         </label>
       </div>
 

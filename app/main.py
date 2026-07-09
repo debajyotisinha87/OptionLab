@@ -97,33 +97,6 @@ _parse_expiry_type = _make_choice_parser(VALID_EXPIRY_TYPES)
 _parse_underlying = _make_choice_parser(SUPPORTED_UNDERLYINGS)
 
 
-def _parse_strike_offset(value: str) -> int:
-
-    try:
-
-        offset = int(value)
-
-    except ValueError:
-
-        raise argparse.ArgumentTypeError(
-            f"invalid int value: '{_sanitize_for_stderr(value)}'"
-        )
-
-    if (
-        offset < PayloadBuilder.MIN_STRIKE_OFFSET
-        or offset > PayloadBuilder.MAX_STRIKE_OFFSET
-    ):
-
-        raise argparse.ArgumentTypeError(
-            f"strike offset must be between "
-            f"{PayloadBuilder.MIN_STRIKE_OFFSET} and "
-            f"{PayloadBuilder.MAX_STRIKE_OFFSET} "
-            "(DhanHQ's supported range for index options)"
-        )
-
-    return offset
-
-
 def _parse_option_types(value: str) -> list[str]:
 
     try:
@@ -174,12 +147,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated option types, e.g. CALL,PUT",
     )
     download_parser.add_argument(
-        "--strike-from", required=True, type=_parse_strike_offset
-    )
-    download_parser.add_argument(
-        "--strike-to", required=True, type=_parse_strike_offset
-    )
-    download_parser.add_argument(
         "--start-date", required=True, type=_parse_date
     )
     download_parser.add_argument(
@@ -190,6 +157,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=_parse_non_blank,
         help="Unique job identifier; defaults to "
         "<underlying>-<start_date>-<end_date>",
+    )
+    download_parser.add_argument(
+        "--save-parquet-to",
+        type=_parse_non_blank,
+        default=None,
+        help="Optional folder to auto-save downloaded data as "
+        "year/month-partitioned Parquet files, alongside the DuckDB write",
     )
 
     resume_parser = subparsers.add_parser(
@@ -215,11 +189,12 @@ def run_download(args: argparse.Namespace):
         underlying=args.underlying,
         expiry_type=args.expiry_type,
         option_types=args.option_types,
-        strike_from=args.strike_from,
-        strike_to=args.strike_to,
+        strike_from=PayloadBuilder.MIN_STRIKE_OFFSET,
+        strike_to=PayloadBuilder.MAX_STRIKE_OFFSET,
         start_date=args.start_date,
         end_date=args.end_date,
         created_at=datetime.now(),
+        parquet_output_dir=args.save_parquet_to,
     )
 
     DownloadEngine().run(job)
@@ -234,13 +209,6 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
-
-    if args.command == "download" and args.strike_from > args.strike_to:
-
-        parser.error(
-            f"--strike-from ({args.strike_from}) must be <= "
-            f"--strike-to ({args.strike_to})"
-        )
 
     banner()
 

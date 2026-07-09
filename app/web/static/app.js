@@ -40,11 +40,10 @@ async function submitJob(event) {
     underlying: document.getElementById("f-underlying").value,
     expiry_type: document.getElementById("f-expiry-type").value,
     option_types: optionTypes,
-    strike_from: parseInt(document.getElementById("f-strike-from").value, 10),
-    strike_to: parseInt(document.getElementById("f-strike-to").value, 10),
     start_date: document.getElementById("f-start-date").value,
     end_date: document.getElementById("f-end-date").value,
     job_id: document.getElementById("f-job-id").value || null,
+    parquet_output_dir: document.getElementById("f-parquet-dir").value || null,
   };
 
   setFormMessage("Starting...", "");
@@ -76,6 +75,32 @@ function formatValidationError(detail) {
     return detail.map((e) => e.msg).join("; ");
   }
   return String(detail);
+}
+
+async function browseFolder() {
+  const field = document.getElementById("f-parquet-dir");
+
+  try {
+    const response = await fetch("/api/browse-folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initial_dir: field.value || null }),
+    });
+
+    const body = await response.json();
+
+    if (!response.ok) {
+      alert(body.detail || "Failed to open folder picker");
+      return;
+    }
+
+    if (body.path) {
+      field.value = body.path;
+    }
+    // body.path is null when the user cancels - leave the field as-is.
+  } catch (err) {
+    alert("Request failed: " + err);
+  }
 }
 
 async function resumeJob(jobId) {
@@ -148,6 +173,7 @@ async function refreshJobs() {
 }
 
 document.getElementById("job-form").addEventListener("submit", submitJob);
+document.getElementById("f-parquet-browse").addEventListener("click", browseFolder);
 
 loadUnderlyings();
 refreshJobs();

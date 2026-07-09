@@ -149,6 +149,7 @@ class FakeRepository:
         start_date,
         end_date,
         created_at,
+        parquet_output_dir=None,
     ):
 
         existing = self.jobs.get(job_id)
@@ -163,6 +164,7 @@ class FakeRepository:
                 or existing["strike_to"] != strike_to
                 or existing["start_date"] != start_date
                 or existing["end_date"] != end_date
+                or existing["parquet_output_dir"] != parquet_output_dir
             ):
 
                 raise ValueError(
@@ -191,6 +193,7 @@ class FakeRepository:
             "completed_batches": 0,
             "failed_batches": 0,
             "total_rows": 0,
+            "parquet_output_dir": parquet_output_dir,
         }
 
     def get_job(self, job_id):
@@ -247,7 +250,7 @@ class FakeProgressReporter:
 
 class SuccessfulDownloadService:
 
-    def download(self, payload):
+    def download(self, payload, parquet_output_dir=None):
 
         return {
             "success": True,
@@ -264,7 +267,7 @@ class CountingDownloadService:
         self.download_count = 0
         self.fail_option_types = set(fail_option_types)
 
-    def download(self, payload):
+    def download(self, payload, parquet_output_dir=None):
 
         self.download_count += 1
 

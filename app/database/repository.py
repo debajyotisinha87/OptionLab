@@ -424,6 +424,15 @@ class Repository:
 
         self.execute_sql_file("download_jobs.sql")
 
+        # download_jobs.sql's CREATE TABLE IF NOT EXISTS is a no-op
+        # against an already-existing database file, so a column added
+        # after the table was first created needs its own idempotent
+        # migration to reach a live, pre-existing database/optionlab.duckdb.
+        self.execute(
+            "ALTER TABLE download_jobs "
+            "ADD COLUMN IF NOT EXISTS parquet_output_dir VARCHAR"
+        )
+
     @_synchronized
     def check_job_reusable(
         self,
@@ -435,6 +444,7 @@ class Repository:
         strike_to: int,
         start_date: str,
         end_date: str,
+        parquet_output_dir: str | None = None,
     ) -> None:
         """Raises ValueError if job_id already exists with different
         parameters than given; a no-op if job_id is new or matches the
@@ -458,6 +468,7 @@ class Repository:
             or existing["strike_to"] != strike_to
             or str(existing["start_date"]) != start_date
             or str(existing["end_date"]) != end_date
+            or existing["parquet_output_dir"] != parquet_output_dir
         ):
 
             raise ValueError(
@@ -480,6 +491,7 @@ class Repository:
         start_date: str,
         end_date: str,
         created_at,
+        parquet_output_dir: str | None = None,
     ):
 
         self.check_job_reusable(
@@ -491,6 +503,7 @@ class Repository:
             strike_to,
             start_date,
             end_date,
+            parquet_output_dir,
         )
 
         if self.get_job(job_id) is not None:
@@ -511,9 +524,10 @@ class Repository:
                 start_date,
                 end_date,
                 status,
-                created_at
+                created_at,
+                parquet_output_dir
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
             """,
             [
                 job_id,
@@ -527,6 +541,7 @@ class Repository:
                 start_date,
                 end_date,
                 created_at,
+                parquet_output_dir,
             ],
         )
 

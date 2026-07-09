@@ -54,7 +54,7 @@ class FakeProgressReporter:
 
 class SuccessfulDownloadService:
 
-    def download(self, payload):
+    def download(self, payload, parquet_output_dir=None):
 
         return {
             "success": True,
@@ -66,7 +66,7 @@ class SuccessfulDownloadService:
 
 class FailedDownloadService:
 
-    def download(self, payload):
+    def download(self, payload, parquet_output_dir=None):
 
         return {
             "success": False,
@@ -82,7 +82,7 @@ class CountingDownloadService:
 
         self.download_count = 0
 
-    def download(self, payload):
+    def download(self, payload, parquet_output_dir=None):
 
         self.download_count += 1
 

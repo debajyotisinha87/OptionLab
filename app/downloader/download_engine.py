@@ -48,6 +48,7 @@ class DownloadEngine:
             start_date=job.start_date,
             end_date=job.end_date,
             created_at=job.created_at,
+            parquet_output_dir=job.parquet_output_dir,
         )
 
         self.execute(job)
@@ -115,6 +116,7 @@ class DownloadEngine:
             end_date=str(record["end_date"]),
             created_at=record["created_at"],
             status=JobStatus(record["status"]),
+            parquet_output_dir=record.get("parquet_output_dir"),
         )
 
     @staticmethod
@@ -323,7 +325,9 @@ class DownloadEngine:
             strike_offset=strike_offset,
         )
 
-        result = self.service.download(payload)
+        result = self.service.download(
+            payload, parquet_output_dir=job.parquet_output_dir
+        )
 
         if result["success"]:
 

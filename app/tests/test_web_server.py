@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 import app.web.server as server_module
+from app.builders.payload_builder import PayloadBuilder
 
 
 class FakeRepo:
@@ -115,8 +116,6 @@ VALID_PAYLOAD = {
     "underlying": "NIFTY",
     "expiry_type": "MONTH",
     "option_types": ["CALL"],
-    "strike_from": 0,
-    "strike_to": 0,
     "start_date": "2025-01-01",
     "end_date": "2025-01-01",
 }
@@ -229,6 +228,30 @@ def test_create_job_dispatches_to_job_runner_start():
         assert len(runner.started) == 1
         assert runner.started[0].underlying == "NIFTY"
         assert runner.started[0].option_types == ["CALL"]
+
+        # strike_from/strike_to are no longer a client-settable field -
+        # every download always covers DhanHQ's full supported range.
+        assert runner.started[0].strike_from == PayloadBuilder.MIN_STRIKE_OFFSET
+        assert runner.started[0].strike_to == PayloadBuilder.MAX_STRIKE_OFFSET
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_create_job_passes_parquet_output_dir_through_to_the_job():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def run(client):
+
+        payload = dict(VALID_PAYLOAD, parquet_output_dir="C:/exports/nifty")
+
+        response = client.post("/api/jobs", json=payload)
+
+        assert response.status_code == 202
+
+        runner = Runner.instances[-1]
+        assert runner.started[0].parquet_output_dir == "C:/exports/nifty"
 
     with_fake_job_runner(Runner, run)
 
@@ -391,6 +414,77 @@ def test_index_serves_the_frontend():
     with_fake_job_runner(Runner, run)
 
 
+def test_browse_folder_returns_the_picked_path():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def fake_pick_folder(initial_dir=None):
+        return "C:/exports/nifty"
+
+    def run(client):
+
+        original = server_module.pick_folder
+        server_module.pick_folder = fake_pick_folder
+
+        try:
+            response = client.post("/api/browse-folder", json={})
+        finally:
+            server_module.pick_folder = original
+
+        assert response.status_code == 200
+        assert response.json() == {"path": "C:/exports/nifty"}
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_browse_folder_returns_null_path_when_cancelled():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def fake_pick_folder(initial_dir=None):
+        return None
+
+    def run(client):
+
+        original = server_module.pick_folder
+        server_module.pick_folder = fake_pick_folder
+
+        try:
+            response = client.post("/api/browse-folder", json={})
+        finally:
+            server_module.pick_folder = original
+
+        assert response.status_code == 200
+        assert response.json() == {"path": None}
+
+    with_fake_job_runner(Runner, run)
+
+
+def test_browse_folder_returns_500_when_the_dialog_fails():
+
+    class Runner(FakeJobRunner):
+        instances = []
+
+    def failing_pick_folder(initial_dir=None):
+        raise RuntimeError("tkinter unavailable")
+
+    def run(client):
+
+        original = server_module.pick_folder
+        server_module.pick_folder = failing_pick_folder
+
+        try:
+            response = client.post("/api/browse-folder", json={})
+        finally:
+            server_module.pick_folder = original
+
+        assert response.status_code == 500
+
+    with_fake_job_runner(Runner, run)
+
+
 def test_list_jobs_reports_live_progress_not_the_frozen_job_row():
     """completed_batches/failed_batches on the job row are only
     written once, when a job finishes - list_jobs()/get_job() must
@@ -459,6 +553,7 @@ if __name__ == "__main__":
     test_get_job_returns_404_for_unknown_job()
     test_get_job_marks_is_running_for_the_active_job()
     test_create_job_dispatches_to_job_runner_start()
+    test_create_job_passes_parquet_output_dir_through_to_the_job()
     test_create_job_uses_the_explicit_job_id_when_given()
     test_create_job_rejects_an_unsupported_underlying()
     test_create_job_rejects_an_invalid_date()
@@ -469,6 +564,9 @@ if __name__ == "__main__":
     test_resume_job_returns_404_for_unknown_job_id()
     test_resume_job_returns_409_when_a_job_is_already_running()
     test_index_serves_the_frontend()
+    test_browse_folder_returns_the_picked_path()
+    test_browse_folder_returns_null_path_when_cancelled()
+    test_browse_folder_returns_500_when_the_dialog_fails()
     test_list_jobs_reports_live_progress_not_the_frozen_job_row()
     test_lifespan_logs_and_reraises_when_job_runner_construction_fails()
 

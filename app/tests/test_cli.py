@@ -4,13 +4,13 @@ import logging
 import sys
 
 import app.main as main_module
+from app.builders.payload_builder import PayloadBuilder
 from app.config.config import LOG_DIR
 from app.main import (
     _parse_date,
     _parse_expiry_type,
     _parse_non_blank,
     _parse_option_types,
-    _parse_strike_offset,
     _parse_underlying,
     build_parser,
     main,
@@ -116,8 +116,6 @@ def test_build_parser_parses_download_arguments():
         "--underlying", "NIFTY",
         "--expiry-type", "MONTH",
         "--option-types", "call, put",
-        "--strike-from", "-10",
-        "--strike-to", "10",
         "--start-date", "2025-01-01",
         "--end-date", "2025-03-31",
     ])
@@ -125,8 +123,6 @@ def test_build_parser_parses_download_arguments():
     assert args.command == "download"
     assert args.underlying == "NIFTY"
     assert args.option_types == ["CALL", "PUT"]
-    assert args.strike_from == -10
-    assert args.strike_to == 10
     assert args.start_date == "2025-01-01"
     assert args.end_date == "2025-03-31"
     assert args.job_id is None
@@ -142,8 +138,6 @@ def test_build_parser_rejects_an_invalid_date():
             "--underlying", "NIFTY",
             "--expiry-type", "MONTH",
             "--option-types", "CALL",
-            "--strike-from", "0",
-            "--strike-to", "0",
             "--start-date", "not-a-date",
             "--end-date", "2025-03-31",
         ])
@@ -164,8 +158,6 @@ def test_build_parser_rejects_empty_option_types():
             "--underlying", "NIFTY",
             "--expiry-type", "MONTH",
             "--option-types", " , ",
-            "--strike-from", "0",
-            "--strike-to", "0",
             "--start-date", "2025-01-01",
             "--end-date", "2025-01-01",
         ])
@@ -186,8 +178,6 @@ def test_build_parser_rejects_blank_underlying_and_expiry_type():
             "--underlying", "",
             "--expiry-type", "  ",
             "--option-types", "CALL",
-            "--strike-from", "0",
-            "--strike-to", "0",
             "--start-date", "2025-01-01",
             "--end-date", "2025-01-31",
         ])
@@ -210,8 +200,6 @@ def test_build_parser_rejects_a_blank_job_id():
             "--underlying", "NIFTY",
             "--expiry-type", "MONTH",
             "--option-types", "CALL",
-            "--strike-from", "0",
-            "--strike-to", "0",
             "--start-date", "2025-01-01",
             "--end-date", "2025-01-31",
             "--job-id", "",
@@ -260,8 +248,6 @@ def test_build_parser_rejects_an_invalid_expiry_type():
             "--underlying", "NIFTY",
             "--expiry-type", "QUARTER",
             "--option-types", "CALL",
-            "--strike-from", "0",
-            "--strike-to", "0",
             "--start-date", "2025-01-01",
             "--end-date", "2025-01-31",
         ])
@@ -299,8 +285,6 @@ def test_build_parser_rejects_an_invalid_underlying():
             "--underlying", "RELIANCE",
             "--expiry-type", "MONTH",
             "--option-types", "CALL",
-            "--strike-from", "0",
-            "--strike-to", "0",
             "--start-date", "2025-01-01",
             "--end-date", "2025-01-31",
         ])
@@ -309,48 +293,6 @@ def test_build_parser_rejects_an_invalid_underlying():
         return
 
     raise AssertionError("Expected SystemExit for an invalid --underlying")
-
-
-def test_parse_strike_offset_rejects_out_of_range_values():
-
-    assert _parse_strike_offset("10") == 10
-    assert _parse_strike_offset("-10") == -10
-
-    try:
-        _parse_strike_offset("11")
-    except argparse.ArgumentTypeError:
-        pass
-    else:
-        raise AssertionError("Expected ArgumentTypeError for an out-of-range strike offset")
-
-    try:
-        _parse_strike_offset("-11")
-    except argparse.ArgumentTypeError:
-        return
-
-    raise AssertionError("Expected ArgumentTypeError for an out-of-range strike offset")
-
-
-def test_main_rejects_strike_from_greater_than_strike_to():
-
-    try:
-        main([
-            "download",
-            "--underlying", "NIFTY",
-            "--expiry-type", "MONTH",
-            "--option-types", "CALL",
-            "--strike-from", "5",
-            "--strike-to", "-5",
-            "--start-date", "2025-01-01",
-            "--end-date", "2025-01-31",
-        ])
-    except SystemExit as exc:
-        assert exc.code != 0
-        return
-
-    raise AssertionError(
-        "Expected SystemExit when --strike-from > --strike-to"
-    )
 
 
 def test_parse_non_blank_rejects_blank_and_strips_whitespace():
@@ -446,8 +388,6 @@ def test_download_defaults_job_id_from_underlying_and_dates():
             "--underlying", "NIFTY",
             "--expiry-type", "MONTH",
             "--option-types", "CALL,PUT",
-            "--strike-from", "-1",
-            "--strike-to", "1",
             "--start-date", "2025-01-01",
             "--end-date", "2025-01-31",
         ])
@@ -459,6 +399,11 @@ def test_download_defaults_job_id_from_underlying_and_dates():
 
         assert job.job_id == "NIFTY-2025-01-01-2025-01-31"
         assert job.option_types == ["CALL", "PUT"]
+
+        # strike_from/strike_to are no longer a user-facing CLI option -
+        # every download always covers DhanHQ's full supported range.
+        assert job.strike_from == PayloadBuilder.MIN_STRIKE_OFFSET
+        assert job.strike_to == PayloadBuilder.MAX_STRIKE_OFFSET
 
     with_fake_engine(run)
 
@@ -472,8 +417,6 @@ def test_download_respects_an_explicit_job_id():
             "--underlying", "NIFTY",
             "--expiry-type", "MONTH",
             "--option-types", "CALL",
-            "--strike-from", "0",
-            "--strike-to", "0",
             "--start-date", "2025-01-01",
             "--end-date", "2025-01-01",
             "--job-id", "MY-CUSTOM-JOB",
@@ -563,8 +506,6 @@ def test_download_returns_nonzero_and_logs_on_value_error():
             "--underlying", "NIFTY",
             "--expiry-type", "MONTH",
             "--option-types", "CALL",
-            "--strike-from", "0",
-            "--strike-to", "0",
             "--start-date", "2025-01-01",
             "--end-date", "2025-01-01",
             "--job-id", "DUPLICATE",
@@ -630,8 +571,6 @@ if __name__ == "__main__":
     test_parse_underlying_accepts_supported_underlyings_case_insensitively()
     test_parse_underlying_rejects_an_unsupported_value()
     test_build_parser_rejects_an_invalid_underlying()
-    test_parse_strike_offset_rejects_out_of_range_values()
-    test_main_rejects_strike_from_greater_than_strike_to()
     test_parse_non_blank_rejects_blank_and_strips_whitespace()
     test_parse_date_sanitizes_unencodable_characters_in_its_error_message()
     test_parse_underlying_sanitizes_unencodable_characters_in_its_error_message()

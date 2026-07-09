@@ -36,5 +36,7 @@ CREATE TABLE IF NOT EXISTS download_jobs (
 
     total_rows BIGINT DEFAULT 0,
 
+    parquet_output_dir VARCHAR,
+
     remarks VARCHAR
 );

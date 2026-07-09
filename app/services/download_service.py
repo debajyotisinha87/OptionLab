@@ -3,9 +3,13 @@ Download Service
 """
 
 from app.api.rolling_option import RollingOptionAPI
+from app.config.logging_config import get_logger
 from app.database.repository import Repository
 from app.storage.data_normalizer import DataNormalizer
+from app.storage.parquet_writer import ParquetWriter
 from app.validator.data_validator import DataValidator
+
+logger = get_logger()
 
 
 class DownloadService:
@@ -15,7 +19,7 @@ class DownloadService:
         self.api = RollingOptionAPI()
         self.repo = Repository()
 
-    def download(self, payload):
+    def download(self, payload, parquet_output_dir: str | None = None):
 
         try:
 
@@ -28,6 +32,20 @@ class DownloadService:
             option_data = data.get(option_data_key)
 
             if option_data is None:
+
+                logger.error(
+                    "No data returned from API - underlying=%s option_type=%s "
+                    "strike=%s expiry_type=%s range=%s->%s (HTTP %s): "
+                    "raw response=%r",
+                    payload["symbol"],
+                    payload["drvOptionType"],
+                    payload["strike"],
+                    payload["expiryFlag"],
+                    payload["fromDate"],
+                    payload["toDate"],
+                    response.get("_http_status_code", "unknown"),
+                    response,
+                )
 
                 return {
                     "success": False,
@@ -57,6 +75,27 @@ class DownloadService:
                 }
 
             self.repo.insert_option_data(df)
+
+            if parquet_output_dir:
+
+                try:
+
+                    ParquetWriter.write(
+                        df, parquet_output_dir, underlying=payload["symbol"]
+                    )
+
+                except Exception as exc:
+
+                    # DuckDB (already written above) remains the source
+                    # of truth. A broken export folder (permissions,
+                    # deleted drive, full disk) must not turn an
+                    # otherwise-successful unit into a FAILED one -
+                    # retrying can't fix a bad folder, and would just
+                    # burn real DhanHQ API calls on every retry.
+                    logger.error(
+                        f"Parquet export failed for {payload['symbol']} "
+                        f"{payload['drvOptionType']} ({payload['strike']}): {exc}"
+                    )
 
             return {
                 "success": True,

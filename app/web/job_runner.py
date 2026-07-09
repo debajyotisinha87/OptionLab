@@ -67,6 +67,7 @@ class JobRunner:
             job.strike_to,
             job.start_date,
             job.end_date,
+            job.parquet_output_dir,
         )
 
         self._claim(job.job_id)

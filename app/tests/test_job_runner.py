@@ -102,6 +102,7 @@ class FakeJob:
         self.strike_to = 0
         self.start_date = "2025-01-01"
         self.end_date = "2025-01-01"
+        self.parquet_output_dir = None
 
 
 def with_fake_engine(engine_class, fn):

@@ -30,9 +30,14 @@ class RollingOptionAPI(DhanAPI):
         )
 
         try:
-            return response.json()
+            body = response.json()
         except Exception:
-            return {
+            body = {
                 "status": "error",
                 "message": response.text,
             }
+
+        if isinstance(body, dict):
+            body.setdefault("_http_status_code", response.status_code)
+
+        return body

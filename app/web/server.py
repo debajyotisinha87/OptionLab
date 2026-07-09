@@ -22,6 +22,7 @@ from app.builders.payload_builder import PayloadBuilder
 from app.config.logging_config import get_logger
 from app.constants.underlyings import SUPPORTED_UNDERLYINGS
 from app.models.job import DownloadJob
+from app.web.folder_picker import pick_folder
 from app.web.job_runner import JobAlreadyRunningError, JobRunner
 
 logger = get_logger()
@@ -71,11 +72,10 @@ class CreateJobRequest(BaseModel):
     underlying: str
     expiry_type: str
     option_types: list[str]
-    strike_from: int
-    strike_to: int
     start_date: str
     end_date: str
     job_id: str | None = None
+    parquet_output_dir: str | None = None
 
     @field_validator("underlying")
     @classmethod
@@ -108,6 +108,19 @@ class CreateJobRequest(BaseModel):
     def _validate_job_id(cls, value: str | None) -> str | None:
 
         return validation.non_blank(value) if value is not None else None
+
+    @field_validator("parquet_output_dir")
+    @classmethod
+    def _validate_parquet_output_dir(cls, value: str | None) -> str | None:
+
+        return validation.non_blank(value) if value is not None else None
+
+
+class BrowseFolderRequest(BaseModel):
+    """POST /api/browse-folder request body - initial_dir is optional,
+    used to reopen the native dialog where the user last left off."""
+
+    initial_dir: str | None = None
 
 
 def _json_safe(value: object) -> object:
@@ -182,6 +195,25 @@ def list_underlyings():
     return sorted(SUPPORTED_UNDERLYINGS.keys())
 
 
+@app.post("/api/browse-folder")
+def browse_folder(request: BrowseFolderRequest | None = None):
+    """Opens a native OS folder-picker dialog server-side (this is a
+    local, single-user tool - the server and the browser run on the
+    same machine) and returns the chosen path, or null if cancelled."""
+
+    try:
+
+        path = pick_folder(initial_dir=request.initial_dir if request else None)
+
+    except Exception as exc:
+
+        logger.error(f"Folder picker failed: {exc}")
+
+        raise HTTPException(500, f"Could not open folder picker: {exc}")
+
+    return {"path": path}
+
+
 @app.get("/api/jobs")
 def list_jobs(job_runner: JobRunner = Depends(get_job_runner)):
     """Lists every job ever created, newest first, for the job table."""
@@ -222,11 +254,12 @@ def create_job(
         underlying=request.underlying,
         expiry_type=request.expiry_type,
         option_types=request.option_types,
-        strike_from=request.strike_from,
-        strike_to=request.strike_to,
+        strike_from=PayloadBuilder.MIN_STRIKE_OFFSET,
+        strike_to=PayloadBuilder.MAX_STRIKE_OFFSET,
         start_date=request.start_date,
         end_date=request.end_date,
         created_at=datetime.now(),
+        parquet_output_dir=request.parquet_output_dir,
     )
 
     try:
