@@ -96,4 +96,4 @@ dist/
 # Future ML Models (if we add them later)
 ###############################################################################
 
-models/
+/ml_models/
