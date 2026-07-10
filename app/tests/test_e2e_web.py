@@ -80,7 +80,12 @@ def _wait_for_terminal_status(client, job_id, timeout=10):
 def test_web_download_runs_the_real_pipeline_end_to_end():
 
     original_fetch = RollingOptionAPI.fetch
+    original_auto_sync = server_module._auto_sync
     RollingOptionAPI.fetch = fake_fetch
+    # Real server startup fires _auto_sync() for real, which would
+    # otherwise make a genuine DhanHQ network call this test's "only
+    # RollingOptionAPI.fetch is stubbed" guarantee explicitly rules out.
+    server_module._auto_sync = lambda job_runner: None
 
     try:
 
@@ -122,12 +127,15 @@ def test_web_download_runs_the_real_pipeline_end_to_end():
     finally:
 
         RollingOptionAPI.fetch = original_fetch
+        server_module._auto_sync = original_auto_sync
 
 
 def test_web_download_with_parquet_output_dir_writes_the_partitioned_file():
 
     original_fetch = RollingOptionAPI.fetch
+    original_auto_sync = server_module._auto_sync
     RollingOptionAPI.fetch = fake_fetch
+    server_module._auto_sync = lambda job_runner: None
 
     try:
 
@@ -160,6 +168,7 @@ def test_web_download_with_parquet_output_dir_writes_the_partitioned_file():
     finally:
 
         RollingOptionAPI.fetch = original_fetch
+        server_module._auto_sync = original_auto_sync
 
     partition_path = (
         PARQUET_OUTPUT_DIR / "underlying=NIFTY" / "year=2025" / "month=01"

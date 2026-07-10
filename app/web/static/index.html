@@ -2,37 +2,77 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OptionLab</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
 <header>
-  <h1>OptionLab</h1>
-  <p class="subtitle">Historical options data downloader</p>
+  <div class="brand">
+    <span class="brand-mark">OL</span>
+    <div>
+      <h1>OptionLab</h1>
+      <p class="subtitle">Historical options data &mdash; NIFTY &amp; SENSEX</p>
+    </div>
+  </div>
+
+  <button type="button" id="menu-toggle" class="menu-toggle" aria-label="Open menu" aria-expanded="false">
+    <span id="menu-status-dot" class="menu-status-dot"></span>
+    <span class="menu-toggle-bars"><span></span><span></span><span></span></span>
+  </button>
 </header>
 
-<main>
+<div class="menu-panel" id="menu-panel" hidden>
 
-  <section class="card" id="token-card" hidden>
-    <h2>DhanHQ Token Expired</h2>
-    <p class="hint">Generate a new access token from your DhanHQ account and paste it below.</p>
-    <div class="field-row">
-      <label>
-        Access Token
-        <input type="password" id="f-token" placeholder="paste new access token">
-      </label>
+  <div class="menu-section" id="connection-section">
+
+    <div class="banner" id="connection-checking">
+      <div class="banner-icon banner-icon-neutral">&#8987;</div>
+      <div class="banner-body">
+        <h2>Checking DhanHQ connection&hellip;</h2>
+        <p class="hint">Verifying your access token.</p>
+      </div>
     </div>
-    <button type="button" id="token-update-btn">Update Token</button>
-    <span id="token-message" class="message"></span>
-  </section>
 
-  <section class="card">
-    <h2>Data Sync</h2>
-    <p class="hint">Keeps NIFTY and SENSEX (WEEK + MONTH, full strike range) up to date automatically in <code>app/exports/parquet</code>.</p>
-    <div id="sync-status-line">
+    <div class="banner" id="connection-form" hidden>
+      <div class="banner-icon">&#9888;</div>
+      <div class="banner-body">
+        <h2>Connect to DhanHQ</h2>
+        <p class="hint">Paste your DhanHQ access token below to get started.</p>
+        <div class="field-row">
+          <label>
+            Access Token
+            <input type="password" id="f-token" placeholder="paste your access token">
+          </label>
+        </div>
+        <div class="connection-form-actions">
+          <button type="button" id="token-update-btn">Connect</button>
+          <button type="button" id="connection-cancel-btn" class="ghost-btn" hidden>Cancel</button>
+        </div>
+        <span id="token-message" class="message"></span>
+      </div>
+    </div>
+
+    <div class="banner" id="connection-connected" hidden>
+      <div class="banner-icon banner-icon-success">&#10003;</div>
+      <div class="banner-body">
+        <h2>Connected to DhanHQ</h2>
+        <p class="hint">Your access token is valid.</p>
+      </div>
+      <button type="button" id="connection-change-btn" class="ghost-btn">Change token</button>
+    </div>
+
+  </div>
+
+  <div class="menu-divider"></div>
+
+  <div class="menu-section">
+    <h3>Data Sync</h3>
+    <p class="hint">Runs automatically every day once connected &mdash; keeps NIFTY and SENSEX (WEEK + MONTH, full strike range) up to date in <code>app/exports/parquet</code>.</p>
+    <div class="sync-action">
       <span id="sync-status-pill" class="status-pill">Checking&hellip;</span>
-      <button type="button" id="sync-btn" disabled>Sync Data</button>
+      <button type="button" id="sync-btn" disabled>Sync Now</button>
     </div>
     <div id="sync-progress" hidden>
       <div class="progress-bar">
@@ -40,82 +80,21 @@
       </div>
       <small id="sync-progress-label"></small>
     </div>
-  </section>
+  </div>
+
+</div>
+
+<main>
 
   <section class="card">
-    <h2>New Download</h2>
-    <form id="job-form">
-      <div class="field-row">
-        <label>
-          Underlying
-          <select id="f-underlying" required></select>
-        </label>
-        <label>
-          Expiry Type
-          <select id="f-expiry-type" required>
-            <option value="MONTH">MONTH</option>
-            <option value="WEEK">WEEK</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="field-row">
-        <label class="checkbox-label"><input type="checkbox" name="option-type" value="CALL" checked> CALL</label>
-        <label class="checkbox-label"><input type="checkbox" name="option-type" value="PUT" checked> PUT</label>
-      </div>
-      <p class="hint">Downloads the full ATM&minus;10 to ATM+10 strike range every time (DhanHQ's supported range for index options) &mdash; not configurable.</p>
-
-      <div class="field-row">
-        <label>
-          Start Date
-          <input type="date" id="f-start-date" required>
-        </label>
-        <label>
-          End Date
-          <input type="date" id="f-end-date" required>
-        </label>
-      </div>
-
-      <div class="field-row">
-        <label>
-          Job ID <span class="hint">(optional)</span>
-          <input type="text" id="f-job-id" placeholder="auto-generated if left blank">
-        </label>
-      </div>
-
-      <div class="field-row">
-        <label>
-          Save Parquet to <span class="hint">(optional)</span>
-          <span class="input-with-button">
-            <input type="text" id="f-parquet-dir" placeholder="not saved to Parquet if left blank">
-            <button type="button" id="f-parquet-browse">Browse&hellip;</button>
-          </span>
-        </label>
-      </div>
-
-      <button type="submit">Start Download</button>
-      <span id="form-message" class="message"></span>
-    </form>
-  </section>
-
-  <section class="card">
-    <h2>Jobs</h2>
-    <table id="jobs-table">
-      <thead>
-        <tr>
-          <th>Job ID</th>
-          <th>Underlying</th>
-          <th>Status</th>
-          <th>Progress</th>
-          <th>Rows</th>
-          <th>Dates</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="jobs-body">
-        <tr><td colspan="7" class="empty">No jobs yet.</td></tr>
-      </tbody>
-    </table>
+    <h2>Data Status</h2>
+    <p class="hint">Latest downloaded trading day per underlying/expiry combination.</p>
+    <div class="combo-grid" id="combo-grid">
+      <div class="combo-tile skeleton"></div>
+      <div class="combo-tile skeleton"></div>
+      <div class="combo-tile skeleton"></div>
+      <div class="combo-tile skeleton"></div>
+    </div>
   </section>
 
 </main>

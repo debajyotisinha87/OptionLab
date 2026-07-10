@@ -182,10 +182,22 @@ def with_fake_job_runner(runner_class, fn):
     """Patches the JobRunner CLASS referenced by app/web/server.py's
     lifespan (not just the get_job_runner dependency), so entering the
     TestClient context (which runs the real lifespan startup event)
-    never touches the real DownloadEngine/DuckDB connection."""
+    never touches the real DownloadEngine/DuckDB connection.
 
-    original = server_module.JobRunner
+    Also patches _auto_sync() to a no-op, since lifespan's startup
+    event fires it for real in a background thread. Faking DhanAPI's
+    response instead (to make _auto_sync exit early on its own) would
+    race the test's own request/assertions in `fn` - some tests patch
+    server_module.DhanAPI to report a *valid* connection for their own
+    purposes, and there's no guarantee the background thread reads it
+    before or after that patch lands. A direct no-op has no such race:
+    it never touches DhanAPI or the FakeJobRunner's repo at all."""
+
+    original_job_runner = server_module.JobRunner
+    original_auto_sync = server_module._auto_sync
+
     server_module.JobRunner = runner_class
+    server_module._auto_sync = lambda job_runner: None
 
     try:
 
@@ -195,7 +207,8 @@ def with_fake_job_runner(runner_class, fn):
 
     finally:
 
-        server_module.JobRunner = original
+        server_module.JobRunner = original_job_runner
+        server_module._auto_sync = original_auto_sync
 
 
 def test_list_underlyings_returns_the_supported_set():

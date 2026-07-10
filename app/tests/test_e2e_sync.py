@@ -5,7 +5,7 @@ Exercises the auto-sync orchestration path for real: SyncPlanner.plan_jobs()
 -> JobRunner.start_many() -> DownloadEngine.run() for each queued job,
 through the actual POST /api/sync endpoint, with only
 RollingOptionAPI.fetch stubbed (no real DhanHQ call). SyncPlanner's
-UNDERLYINGS/EXPIRY_TYPES/GENESIS_DATE are temporarily narrowed to a
+UNDERLYINGS/EXPIRY_TYPES/GENESIS_DATES are temporarily narrowed to a
 single, otherwise-untouched underlying (BANKNIFTY - every other e2e
 test in this suite only ever uses NIFTY) and a 2-day genesis, so this
 runs in seconds instead of the real ~3.5-year, 4-combo backfill.
@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 import app.web.server as server_module
 from app.api.rolling_option import RollingOptionAPI
 from app.autosync.sync_planner import SyncPlanner
+from app.constants.trading_calendar import expected_latest_trading_date
 from app.database.repository import Repository
 
 TEST_UNDERLYING = "BANKNIFTY"
@@ -97,14 +98,23 @@ def test_sync_runs_the_real_pipeline_and_second_run_is_a_no_op():
     original_fetch = RollingOptionAPI.fetch
     original_underlyings = SyncPlanner.UNDERLYINGS
     original_expiry_types = SyncPlanner.EXPIRY_TYPES
-    original_genesis = SyncPlanner.GENESIS_DATE
+    original_genesis = SyncPlanner.GENESIS_DATES
+    original_auto_sync = server_module._auto_sync
 
     RollingOptionAPI.fetch = fake_fetch
     SyncPlanner.UNDERLYINGS = [TEST_UNDERLYING]
     SyncPlanner.EXPIRY_TYPES = [TEST_EXPIRY_TYPE]
-    SyncPlanner.GENESIS_DATE = (
-        datetime.now().date() - timedelta(days=2)
-    ).strftime("%Y-%m-%d")
+    SyncPlanner.GENESIS_DATES = {
+        TEST_UNDERLYING: (
+            datetime.now().date() - timedelta(days=2)
+        ).strftime("%Y-%m-%d")
+    }
+    # Real server startup fires _auto_sync() for real, in a background
+    # thread racing this test's own explicit client.post("/api/sync")
+    # calls - it would either double-trigger the sync (real DhanHQ
+    # network call this test doesn't stub) or make the test's own
+    # sync request lose the race and get a 409.
+    server_module._auto_sync = lambda job_runner: None
 
     _reset_test_data()
 
@@ -134,7 +144,7 @@ def test_sync_runs_the_real_pipeline_and_second_run_is_a_no_op():
 
             latest = repo.get_latest_trade_date(TEST_UNDERLYING, TEST_EXPIRY_TYPE)
             assert latest is not None
-            assert latest == datetime.now().date()
+            assert latest == expected_latest_trading_date(datetime.now())
 
             # Second sync, same day: nothing left to fetch.
             second_response = client.post("/api/sync")
@@ -147,7 +157,8 @@ def test_sync_runs_the_real_pipeline_and_second_run_is_a_no_op():
         RollingOptionAPI.fetch = original_fetch
         SyncPlanner.UNDERLYINGS = original_underlyings
         SyncPlanner.EXPIRY_TYPES = original_expiry_types
-        SyncPlanner.GENESIS_DATE = original_genesis
+        SyncPlanner.GENESIS_DATES = original_genesis
+        server_module._auto_sync = original_auto_sync
 
         _reset_test_data()
 

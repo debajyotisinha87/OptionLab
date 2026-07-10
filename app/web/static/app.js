@@ -1,175 +1,20 @@
 const POLL_INTERVAL_MS = 2000;
 
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+function setMenuStatusDot(state) {
+  // state is one of "checking" | "form" | "connected" - drives the
+  // small dot on the hamburger icon so connection status is visible
+  // at a glance without opening the menu.
+  const dot = document.getElementById("menu-status-dot");
+  dot.className = "menu-status-dot menu-status-dot-" + state;
 }
 
-async function loadUnderlyings() {
-  const select = document.getElementById("f-underlying");
-  const response = await fetch("/api/underlyings");
-  const underlyings = await response.json();
+function setConnectionState(state) {
+  // state is one of "checking" | "form" | "connected".
+  document.getElementById("connection-checking").hidden = state !== "checking";
+  document.getElementById("connection-form").hidden = state !== "form";
+  document.getElementById("connection-connected").hidden = state !== "connected";
 
-  select.innerHTML = "";
-  for (const underlying of underlyings) {
-    const option = document.createElement("option");
-    option.value = underlying;
-    option.textContent = underlying;
-    select.appendChild(option);
-  }
-}
-
-function setFormMessage(text, kind) {
-  const el = document.getElementById("form-message");
-  el.textContent = text;
-  el.className = "message" + (kind ? " " + kind : "");
-}
-
-async function submitJob(event) {
-  event.preventDefault();
-
-  const optionTypes = Array.from(
-    document.querySelectorAll('input[name="option-type"]:checked')
-  ).map((el) => el.value);
-
-  const payload = {
-    underlying: document.getElementById("f-underlying").value,
-    expiry_type: document.getElementById("f-expiry-type").value,
-    option_types: optionTypes,
-    start_date: document.getElementById("f-start-date").value,
-    end_date: document.getElementById("f-end-date").value,
-    job_id: document.getElementById("f-job-id").value || null,
-    parquet_output_dir: document.getElementById("f-parquet-dir").value || null,
-  };
-
-  setFormMessage("Starting...", "");
-
-  try {
-    const response = await fetch("/api/jobs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    const body = await response.json();
-
-    if (!response.ok) {
-      const detail = body.detail || JSON.stringify(body);
-      setFormMessage(typeof detail === "string" ? detail : formatValidationError(detail), "error");
-      return;
-    }
-
-    setFormMessage(`Started job ${body.job_id}`, "success");
-    refreshJobs();
-  } catch (err) {
-    setFormMessage("Request failed: " + err, "error");
-  }
-}
-
-function formatValidationError(detail) {
-  if (Array.isArray(detail)) {
-    return detail.map((e) => e.msg).join("; ");
-  }
-  return String(detail);
-}
-
-async function browseFolder() {
-  const field = document.getElementById("f-parquet-dir");
-
-  try {
-    const response = await fetch("/api/browse-folder", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ initial_dir: field.value || null }),
-    });
-
-    const body = await response.json();
-
-    if (!response.ok) {
-      alert(body.detail || "Failed to open folder picker");
-      return;
-    }
-
-    if (body.path) {
-      field.value = body.path;
-    }
-    // body.path is null when the user cancels - leave the field as-is.
-  } catch (err) {
-    alert("Request failed: " + err);
-  }
-}
-
-async function resumeJob(jobId) {
-  try {
-    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/resume`, {
-      method: "POST",
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      alert(body.detail || "Failed to resume job");
-      return;
-    }
-    refreshJobs();
-  } catch (err) {
-    alert("Request failed: " + err);
-  }
-}
-
-function renderJobs(jobs) {
-  const tbody = document.getElementById("jobs-body");
-
-  if (jobs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">No jobs yet.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = "";
-
-  for (const job of jobs) {
-    const tr = document.createElement("tr");
-    tr.dataset.status = job.status;
-
-    const resumeButton =
-      (job.status === "FAILED" || job.status === "RUNNING") && !job.is_running
-        ? `<button class="resume-btn" data-job-id="${escapeHtml(job.job_id)}">Resume</button>`
-        : "";
-
-    tr.innerHTML = `
-      <td>${escapeHtml(job.job_id)}</td>
-      <td>${job.underlying}</td>
-      <td><span class="status-pill status-${job.status}">${job.status}</span></td>
-      <td>
-        <div class="progress-bar">
-          <div class="progress-bar-fill" style="width:${job.percent_complete}%"></div>
-        </div>
-        <small>${job.percent_complete}% (${job.completed_batches + job.failed_batches}/${job.total_batches})</small>
-      </td>
-      <td>${job.total_rows ?? 0}</td>
-      <td>${job.start_date} &rarr; ${job.end_date}</td>
-      <td>${resumeButton}</td>
-    `;
-
-    tbody.appendChild(tr);
-  }
-
-  for (const button of tbody.querySelectorAll(".resume-btn")) {
-    button.addEventListener("click", () => resumeJob(button.dataset.jobId));
-  }
-}
-
-async function refreshJobs() {
-  try {
-    const response = await fetch("/api/jobs");
-    const jobs = await response.json();
-    renderJobs(jobs);
-  } catch (err) {
-    // Transient poll failures are not worth surfacing to the user -
-    // the next poll will retry.
-  }
+  setMenuStatusDot(state);
 }
 
 function setTokenMessage(text, kind) {
@@ -178,14 +23,31 @@ function setTokenMessage(text, kind) {
   el.className = "message" + (kind ? " " + kind : "");
 }
 
+function showConnectionForm(cancelable) {
+  // cancelable is true only when the user opened the form via "Change
+  // token" while already connected, so they can back out without
+  // losing the existing, still-working connection.
+  document.getElementById("connection-cancel-btn").hidden = !cancelable;
+  setTokenMessage("", "");
+  setConnectionState("form");
+}
+
 async function checkTokenStatus() {
+  setConnectionState("checking");
+
   try {
     const response = await fetch("/api/token-status");
     const body = await response.json();
-    document.getElementById("token-card").hidden = body.valid;
+
+    if (body.valid) {
+      setConnectionState("connected");
+    } else {
+      showConnectionForm(false);
+    }
+
     return body.valid;
   } catch (err) {
-    // Leave the token card in its current state on a transient failure.
+    // Transient failure - leave the checking state, next load retries.
     return null;
   }
 }
@@ -199,6 +61,8 @@ async function updateToken() {
     return;
   }
 
+  const button = document.getElementById("token-update-btn");
+  button.disabled = true;
   setTokenMessage("Checking...", "");
 
   try {
@@ -217,14 +81,60 @@ async function updateToken() {
 
     if (body.valid) {
       field.value = "";
-      setTokenMessage("Token updated and verified.", "success");
-      document.getElementById("token-card").hidden = true;
+      setConnectionState("connected");
       refreshSyncStatus();
     } else {
       setTokenMessage("Saved, but DhanHQ still rejects it - check the value and try again.", "error");
     }
   } catch (err) {
     setTokenMessage("Request failed: " + err, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function openMenu() {
+  document.getElementById("menu-panel").hidden = false;
+  document.getElementById("menu-toggle").setAttribute("aria-expanded", "true");
+}
+
+function closeMenu() {
+  document.getElementById("menu-panel").hidden = true;
+  document.getElementById("menu-toggle").setAttribute("aria-expanded", "false");
+}
+
+function toggleMenu(event) {
+  event.stopPropagation();
+
+  const isOpen = !document.getElementById("menu-panel").hidden;
+
+  if (isOpen) {
+    closeMenu();
+  } else {
+    openMenu();
+  }
+}
+
+function renderComboGrid(combos) {
+  const grid = document.getElementById("combo-grid");
+  grid.innerHTML = "";
+
+  for (const combo of combos) {
+    const tile = document.createElement("div");
+    tile.className = "combo-tile" + (combo.up_to_date ? "" : " combo-tile-stale");
+
+    tile.innerHTML = `
+      <div class="combo-tile-top">
+        <span class="combo-underlying">${combo.underlying}</span>
+        <span class="combo-expiry">${combo.expiry_type}</span>
+      </div>
+      <div class="combo-date">${combo.latest_date || "no data"}</div>
+      <span class="status-pill status-dot ${combo.up_to_date ? "status-COMPLETED" : "status-FAILED"}">
+        ${combo.up_to_date ? "Up to date" : "Behind"}
+      </span>
+    `;
+
+    grid.appendChild(tile);
   }
 }
 
@@ -259,6 +169,8 @@ function renderSyncStatus(status) {
       pill.className = "status-pill status-FAILED";
     }
   }
+
+  renderComboGrid(status.combos);
 }
 
 async function refreshSyncStatus() {
@@ -286,21 +198,26 @@ async function startSync() {
     }
 
     refreshSyncStatus();
-    refreshJobs();
   } catch (err) {
     alert("Request failed: " + err);
     button.disabled = false;
   }
 }
 
-document.getElementById("job-form").addEventListener("submit", submitJob);
-document.getElementById("f-parquet-browse").addEventListener("click", browseFolder);
+document.getElementById("menu-toggle").addEventListener("click", toggleMenu);
+document.getElementById("menu-panel").addEventListener("click", (event) => event.stopPropagation());
+document.addEventListener("click", closeMenu);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeMenu();
+  }
+});
+
 document.getElementById("token-update-btn").addEventListener("click", updateToken);
+document.getElementById("connection-change-btn").addEventListener("click", () => showConnectionForm(true));
+document.getElementById("connection-cancel-btn").addEventListener("click", () => setConnectionState("connected"));
 document.getElementById("sync-btn").addEventListener("click", startSync);
 
-loadUnderlyings();
-refreshJobs();
 checkTokenStatus();
 refreshSyncStatus();
-setInterval(refreshJobs, POLL_INTERVAL_MS);
 setInterval(refreshSyncStatus, POLL_INTERVAL_MS);

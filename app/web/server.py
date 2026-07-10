@@ -9,8 +9,10 @@ with:
 """
 
 import os
+import threading
+import time
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from dotenv import set_key
@@ -25,6 +27,7 @@ from app.autosync.sync_planner import SyncPlanner
 from app.builders.payload_builder import PayloadBuilder
 from app.config.config import PROJECT_ROOT
 from app.config.logging_config import get_logger
+from app.constants.trading_calendar import DATA_AVAILABLE_BY
 from app.constants.underlyings import SUPPORTED_UNDERLYINGS
 from app.models.job import DownloadJob
 from app.web.folder_picker import pick_folder
@@ -35,6 +38,70 @@ logger = get_logger()
 STATIC_DIR = Path(__file__).parent / "static"
 
 ENV_PATH = PROJECT_ROOT / ".env"
+
+
+def _auto_sync(job_runner: JobRunner):
+    """Best-effort background catch-up sync - called once on server
+    startup and again right after a token is confirmed valid, so
+    NIFTY/SENSEX data catches up automatically without the user
+    needing to click "Sync Data" every day. SyncPlanner.plan_jobs()
+    is gap-based and already a no-op once today's data is in, so
+    calling this more than once a day (e.g. across server restarts)
+    just costs one cheap DB read - no explicit once-per-day
+    bookkeeping needed. Silently does nothing if the token isn't
+    valid yet or a job is already running; never raises into its
+    caller, since both call sites (startup, token update) must not
+    fail because of this."""
+
+    try:
+
+        if DhanAPI().test_connection().status_code != 200:
+
+            return
+
+        jobs = SyncPlanner.plan_jobs(job_runner.engine.repo)
+
+        if not jobs:
+
+            return
+
+        logger.info(f"Auto-sync: starting {len(jobs)} job(s).")
+
+        job_runner.start_many(jobs)
+
+    except JobAlreadyRunningError:
+
+        pass
+
+    except Exception as exc:
+
+        logger.error(f"Auto-sync failed to start: {exc}")
+
+
+def _daily_sync_scheduler(job_runner: JobRunner):
+    """Runs for the life of the server process: sleeps until
+    DATA_AVAILABLE_BY (8 PM, when a trading session's data should
+    realistically be published - see app/constants/trading_calendar.py)
+    each day, then triggers _auto_sync(), then repeats for the
+    following day. Complements the startup/token-update triggers,
+    which only fire at the moment the app happens to be (re)started
+    or reconnected - this catches a server left running through the
+    end of a trading day up automatically, without the user needing
+    to reopen the app or click anything."""
+
+    while True:
+
+        now = datetime.now()
+
+        target = datetime.combine(now.date(), DATA_AVAILABLE_BY)
+
+        if now >= target:
+
+            target += timedelta(days=1)
+
+        time.sleep((target - now).total_seconds())
+
+        _auto_sync(job_runner)
 
 
 @asynccontextmanager
@@ -56,10 +123,36 @@ async def lifespan(app: FastAPI):
 
         raise
 
+    threading.Thread(
+        target=_auto_sync, args=(app.state.job_runner,), daemon=True
+    ).start()
+
+    threading.Thread(
+        target=_daily_sync_scheduler, args=(app.state.job_runner,), daemon=True
+    ).start()
+
     yield
 
 
 app = FastAPI(title="OptionLab", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _no_cache_static(request: Request, call_next):
+    """Static assets change whenever this codebase is edited, but
+    browsers apply heuristic caching to files served without an
+    explicit Cache-Control header - silently serving a stale app.js/
+    style.css after an edit until the user notices something's wrong
+    and hard-refreshes. Force revalidation on every load instead."""
+
+    response = await call_next(request)
+
+    if request.url.path.startswith("/static/"):
+
+        response.headers["Cache-Control"] = "no-store"
+
+    return response
+
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -245,7 +338,10 @@ def token_status():
 
 
 @app.post("/api/token")
-def update_token(request: UpdateTokenRequest):
+def update_token(
+    request: UpdateTokenRequest,
+    job_runner: JobRunner = Depends(get_job_runner),
+):
     """Writes a new access token into .env and applies it to the
     running process immediately - DhanAPI reads os.environ live (see
     app/api/api_client.py), so no restart is needed. Never logs the
@@ -257,7 +353,15 @@ def update_token(request: UpdateTokenRequest):
 
     response = DhanAPI().test_connection()
 
-    return {"valid": response.status_code == 200}
+    valid = response.status_code == 200
+
+    if valid:
+
+        threading.Thread(
+            target=_auto_sync, args=(job_runner,), daemon=True
+        ).start()
+
+    return {"valid": valid}
 
 
 @app.get("/api/sync-status")
