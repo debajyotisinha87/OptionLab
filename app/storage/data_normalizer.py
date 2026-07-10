@@ -6,6 +6,10 @@ from datetime import datetime
 
 import pandas as pd
 
+from app.config.logging_config import get_logger
+
+logger = get_logger()
+
 
 class DataNormalizer:
 
@@ -71,4 +75,36 @@ class DataNormalizer:
             ]
         ]
 
+        df = DataNormalizer._drop_stale_duplicate_timestamps(df)
+
         return df
+
+    @staticmethod
+    def _drop_stale_duplicate_timestamps(df: pd.DataFrame) -> pd.DataFrame:
+        """DhanHQ's rolling option endpoint stitches together whichever
+        contract is "nearest expiry" as it rolls week to week, and
+        during an expiry-day transition (e.g. BSE moving Sensex weekly
+        expiry from Tuesday to Thursday in Sep 2025) it has been
+        observed to also carry forward a since-inactive contract's
+        frozen last-traded-price at every subsequent minute, alongside
+        the real, actively-traded contract - producing two rows for
+        the same trade_datetime. The stale row is identifiable by
+        volume 0 (no real trade), so keep whichever row at each
+        timestamp has the higher volume."""
+
+        before = len(df)
+
+        df = df.sort_values(["trade_datetime", "volume"], ascending=[True, False])
+
+        df = df.drop_duplicates(subset=["trade_datetime"], keep="first")
+
+        dropped = before - len(df)
+
+        if dropped:
+
+            logger.warning(
+                f"Dropped {dropped} duplicate-timestamp candle(s) "
+                "(kept the higher-volume row per timestamp)."
+            )
+
+        return df.sort_values("trade_datetime").reset_index(drop=True)
