@@ -3,6 +3,7 @@ from datetime import datetime
 from app.downloader.download_engine import DownloadEngine
 from app.models.job import DownloadJob
 from app.planner.download_planner import DownloadPlanner
+from app.quality.quality_checker import QualityChecker
 
 
 class FakeRepository:
@@ -232,6 +233,31 @@ class FakeRepository:
         job["total_rows"] = total_rows
         job["completed_at"] = f"FINISHED-{self.job_close_count}"
 
+    # -- quality checker --
+    # This test suite exercises resume/retry orchestration, not data
+    # quality auditing - these stubs just give QualityChecker (which
+    # DownloadEngine.execute() always runs) nothing to report.
+
+    def get_trade_dates(self, symbol, expiry_flag, start_date, end_date):
+
+        return []
+
+    def get_duplicate_timestamp_count(self, symbol, expiry_flag, start_date, end_date):
+
+        return 0
+
+    def get_daily_row_counts(self, symbol, expiry_flag, start_date, end_date):
+
+        return []
+
+    def get_recent_daily_row_counts(self, symbol, expiry_flag, before_date, limit):
+
+        return []
+
+    def get_row_count(self, symbol, expiry_flag, start_date, end_date):
+
+        return 0
+
 
 class FakeProgressReporter:
 
@@ -315,6 +341,7 @@ def create_test_engine(download_service):
     engine.repo = FakeRepository()
     engine.service = download_service
     engine.progress = FakeProgressReporter()
+    engine.quality_checker = QualityChecker(engine.repo)
 
     return engine
 

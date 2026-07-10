@@ -80,6 +80,118 @@ class Repository:
         # not zero rows - so `result` itself is never None here.
         return result[0]
 
+    @_synchronized
+    def get_trade_dates(
+        self, symbol: str, expiry_flag: str, start_date: str, end_date: str
+    ) -> list:
+        """Distinct trade_date values actually present for a
+        symbol/expiry_flag within [start_date, end_date] - used by
+        QualityChecker to diff against expected weekdays."""
+
+        result = self.db.connection.execute(
+            """
+            SELECT DISTINCT trade_date
+            FROM option_data
+            WHERE symbol = ? AND expiry_flag = ?
+            AND trade_date BETWEEN ? AND ?
+            ORDER BY trade_date
+            """,
+            [symbol, expiry_flag, start_date, end_date],
+        ).fetchall()
+
+        return [row[0] for row in result]
+
+    @_synchronized
+    def get_duplicate_timestamp_count(
+        self, symbol: str, expiry_flag: str, start_date: str, end_date: str
+    ) -> int:
+        """Number of (trade_datetime, option_type, strike_type,
+        expiry_code) groups with more than one row within
+        [start_date, end_date] - a safety net re-scan for the class of
+        cross-job duplication DataNormalizer's within-batch dedup
+        can't see (e.g. two jobs independently downloading overlapping
+        date ranges)."""
+
+        result = self.db.connection.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT 1
+                FROM option_data
+                WHERE symbol = ? AND expiry_flag = ?
+                AND trade_date BETWEEN ? AND ?
+                GROUP BY trade_datetime, option_type, strike_type, expiry_code
+                HAVING COUNT(*) > 1
+            )
+            """,
+            [symbol, expiry_flag, start_date, end_date],
+        ).fetchone()
+
+        return result[0]
+
+    @_synchronized
+    def get_daily_row_counts(
+        self, symbol: str, expiry_flag: str, start_date: str, end_date: str
+    ) -> list:
+        """(trade_date, row_count) pairs within [start_date, end_date],
+        oldest first."""
+
+        result = self.db.connection.execute(
+            """
+            SELECT trade_date, COUNT(*)
+            FROM option_data
+            WHERE symbol = ? AND expiry_flag = ?
+            AND trade_date BETWEEN ? AND ?
+            GROUP BY trade_date
+            ORDER BY trade_date
+            """,
+            [symbol, expiry_flag, start_date, end_date],
+        ).fetchall()
+
+        return result
+
+    @_synchronized
+    def get_recent_daily_row_counts(
+        self, symbol: str, expiry_flag: str, before_date: str, limit: int
+    ) -> list:
+        """(trade_date, row_count) for the `limit` most recent days
+        strictly before `before_date` - a clean prior baseline for
+        row-count-anomaly detection, independent of the data being
+        checked."""
+
+        result = self.db.connection.execute(
+            """
+            SELECT trade_date, COUNT(*) AS n
+            FROM option_data
+            WHERE symbol = ? AND expiry_flag = ?
+            AND trade_date < ?
+            GROUP BY trade_date
+            ORDER BY trade_date DESC
+            LIMIT ?
+            """,
+            [symbol, expiry_flag, before_date, limit],
+        ).fetchall()
+
+        return result
+
+    @_synchronized
+    def get_row_count(
+        self, symbol: str, expiry_flag: str, start_date: str, end_date: str
+    ) -> int:
+        """Total row count for a symbol/expiry_flag within
+        [start_date, end_date]."""
+
+        result = self.db.connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM option_data
+            WHERE symbol = ? AND expiry_flag = ?
+            AND trade_date BETWEEN ? AND ?
+            """,
+            [symbol, expiry_flag, start_date, end_date],
+        ).fetchone()
+
+        return result[0]
+
     # ------------------------------------------------------------------
     # Generic SQL
     # ------------------------------------------------------------------

@@ -10,6 +10,7 @@ from app.models.download_batch import DownloadBatch
 from app.models.enums.job_status import JobStatus
 from app.models.job import DownloadJob
 from app.planner.download_planner import DownloadPlanner
+from app.quality.quality_checker import QualityChecker
 from app.services.download_service import DownloadService
 
 logger = get_logger()
@@ -27,6 +28,7 @@ class DownloadEngine:
         self.service = DownloadService()
         self.repo = self.service.repo
         self.progress = ProgressReporter()
+        self.quality_checker = QualityChecker(self.repo)
 
         self.repo.create_option_data_table()
         self.repo.create_download_manifest_table()
@@ -214,6 +216,8 @@ class DownloadEngine:
             self.progress.close()
 
         self.finish_job(job.job_id)
+
+        self.quality_checker.check(job)
 
         logger.info("=" * 60)
         logger.info("Job Completed")

@@ -1,8 +1,9 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from app.autosync.sync_planner import SyncPlanner
 from app.builders.payload_builder import PayloadBuilder
 from app.config.config import EXPORTS_DIR
+from app.constants.trading_calendar import expected_latest_trading_date
 
 
 class FakeRepository:
@@ -26,7 +27,7 @@ def test_plan_jobs_uses_genesis_date_when_no_existing_data():
 
     for job in jobs:
 
-        assert job.start_date == SyncPlanner.GENESIS_DATE
+        assert job.start_date == SyncPlanner.GENESIS_DATES[job.underlying]
         assert job.option_types == ["CALL", "PUT"]
         assert job.strike_from == PayloadBuilder.MIN_STRIKE_OFFSET
         assert job.strike_to == PayloadBuilder.MAX_STRIKE_OFFSET
@@ -48,8 +49,10 @@ def test_plan_jobs_starts_the_day_after_the_latest_downloaded_date():
 
     expected_start = (latest + timedelta(days=1)).strftime("%Y-%m-%d")
 
+    expected_end = expected_latest_trading_date(datetime.now()).strftime("%Y-%m-%d")
+
     assert nifty_week_job.start_date == expected_start
-    assert nifty_week_job.end_date == date.today().strftime("%Y-%m-%d")
+    assert nifty_week_job.end_date == expected_end
 
 
 def test_plan_jobs_skips_a_combo_already_up_to_date():
